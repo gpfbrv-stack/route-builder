@@ -1,5 +1,5 @@
 import type { Profile } from './config';
 export interface Point { lat: number; lng: number; ele?: number | null }
-export interface RouteState { name: string; points: Point[]; profile: Profile; followRoad: boolean }
+export interface RouteState { name: string; points: Point[]; profile: Profile; followRoad: boolean; importedTrack?: Point[]; importedPlaces?: Place[] }
 export interface Segment { points: Point[]; fallback: boolean }
 export interface Place extends Point { id: number; name: string; kind: 'pass' | 'peak'; routeDistance: number; offset: number; elevationSource: 'OSM' | 'DEM' | 'unknown' }
