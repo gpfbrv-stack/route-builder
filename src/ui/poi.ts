@@ -112,6 +112,7 @@ export function installPoiUI(map: L.Map, onChange: () => void = () => {}) {
     get gap() { return ready ? longestSupplyGap(pois, length) : null; },
     // GPX preserves each original feature, including the machines grouped in the UI.
     get exportPois() { return exportCheck.checked ? pois.filter(p => on[p.kind]) : []; },
+    get fitPois() { return exportCheck.checked ? groupVending(pois).filter(p => on[p.kind]) : []; },
     reset(message: string) { pois = []; length = 0; ready = false; limit = 30; render(); $('poi-status').textContent = message; },
     message(message: string) { $('poi-status').textContent = message; },
     set(next: Poi[], routeLength: number) { pois = next; length = routeLength; ready = true; limit = 30; render(); },

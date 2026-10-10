@@ -95,11 +95,14 @@ it('shares visibility with grouped chart dots and original GPX features, preserv
   const ui = installPoiUI(map);
   ui.set([poi(1), poi(2, 'vend'), { ...poi(3, 'vend'), routeDistance: 2100 }, poi(4, 'wc')], 30000);
   expect(ui.chartPois).toHaveLength(2); expect(ui.exportPois).toHaveLength(3);
+  expect(ui.fitPois).toHaveLength(2); expect(ui.fitPois.find(p => p.kind === 'vend')).toMatchObject({ id: '2', routeDistance: 2000, count: 2 });
   const gap = ui.gap; chip('コンビニ').click();
   expect(ui.chartPois).toHaveLength(1); expect(ui.exportPois).toHaveLength(2); expect(ui.gap).toEqual(gap);
+  expect(ui.fitPois).toHaveLength(1);
   const checkbox = $('poi-gpx') as HTMLInputElement;
   expect(checkbox.checked).toBe(true); checkbox.click();
   expect(ui.exportPois).toEqual([]); expect(ui.chartPois).toHaveLength(1); expect(loadPoiExport()).toBe(false);
+  expect(ui.fitPois).toEqual([]);
   checkbox.click(); expect(loadPoiExport()).toBe(true); expect(ui.exportPois).toHaveLength(2);
 });
 it('restores the GPX checkbox and tolerates denied storage', () => {

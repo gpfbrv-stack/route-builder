@@ -12,6 +12,10 @@ describe('UI controls', () => {
     expect(document.querySelector('.brand .icon-btn')!.textContent).toBe('');
     const share = document.getElementById('share')!, called = vi.fn(); share.onclick = called;
     document.querySelector<HTMLButtonElement>('#menu-pop [data-action="share"]')!.click(); expect(called).toHaveBeenCalledOnce();
+    const garmin = vi.fn(), gpx = vi.fn();
+    document.getElementById('garmin')!.onclick = garmin; document.getElementById('export')!.onclick = gpx;
+    document.querySelector<HTMLButtonElement>('.peek-row [data-action="garmin"]')!.click(); expect(garmin).toHaveBeenCalledOnce();
+    document.querySelector<HTMLButtonElement>('#menu-pop [data-action="export"]')!.click(); expect(gpx).toHaveBeenCalledOnce();
     const profile = document.getElementById('profile') as HTMLSelectElement, change = vi.fn(); profile.onchange = change;
     document.querySelector<HTMLButtonElement>('.m-top [data-profile="road"]')!.click(); expect(profile.value).toBe('road'); expect(change).toHaveBeenCalledOnce();
   });

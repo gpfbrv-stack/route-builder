@@ -4,6 +4,7 @@ import type L from 'leaflet';
 import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
+import { Decoder, Stream } from '@garmin/fitsdk';
 const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
@@ -39,13 +40,16 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   localStorage.clear();
   await import('../main');
   const button = (selector: string) => document.querySelector<HTMLButtonElement>(selector)!;
+  const expectExportsDisabled = (disabled: boolean) => document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => expect(b.disabled).toBe(disabled));
   const state = () => JSON.parse(localStorage.getItem('route-builder:v1')!);
   const settle = () => vi.advanceTimersByTimeAsync(2100);
   expect(button('#export').disabled).toBe(true);
+  expectExportsDisabled(true);
   expect(document.getElementById('layer-pop')!.textContent).not.toContain('Google');
   for (const [lat, lng] of [[35.15, 135.78], [35.1587, 135.7861]]) captured.map!.fire('click', { latlng: { lat, lng } });
   expect(state().points).toHaveLength(2); expect(button('#export').disabled).toBe(true); await settle();
   expect(button('#export').disabled).toBe(false); expect(document.querySelector('.wp-marker.start')!.textContent).toBe('S'); expect(document.querySelector('.wp-marker.goal')!.textContent).toBe('G');
+  expectExportsDisabled(false);
   expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
   expect(document.getElementById('poi-list')!.textContent).toContain('コンビニ');
@@ -96,6 +100,35 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   button('#poi-gpx').click(); convChip.click(); button('#export').click();
   expect((await exportedXml()).querySelectorAll('wpt')).toHaveLength(1);
   convChip.click();
+  // Both UI entry points use the resolved track, grouped POI selection and real encoder.
+  const fitShare = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+  Object.defineProperty(navigator, 'share', { configurable: true, value: fitShare });
+  const sharedFit = async () => {
+    const reading = new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject;
+      reader.readAsArrayBuffer(fitShare.mock.lastCall![0].files[0]);
+    });
+    await vi.runAllTimersAsync();
+    const decoder = new Decoder(Stream.fromByteArray(new Uint8Array(await reading)));
+    expect(decoder.isFIT()).toBe(true); expect(decoder.checkIntegrity()).toBe(true);
+    const result = decoder.read(); expect(result.errors).toEqual([]); return result.messages;
+  };
+  button('#garmin').click();
+  const fit = await sharedFit();
+  expect(fit.courseMesgs![0].subSport).toBe('road'); expect(fit.recordMesgs).toHaveLength(2);
+  expect(fit.coursePointMesgs!.map(p => p.type)).toEqual(['summit', 'store']);
+  button('#poi-gpx').click(); button('.peek-row [data-action="garmin"]').click();
+  expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']);
+  button('#poi-gpx').click(); convChip.click(); button('#garmin').click();
+  expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']); convChip.click();
+  fitShare.mockRejectedValueOnce(new DOMException('cancel', 'AbortError'));
+  const noticeBeforeCancel = document.getElementById('status')!.textContent;
+  button('#garmin').click(); await settle();
+  expect(document.getElementById('status')!.textContent).toBe(noticeBeforeCancel);
+  fitShare.mockRejectedValueOnce(new Error('share failed')); button('#garmin').click(); await settle();
+  expect(document.getElementById('status')!.textContent).toContain('FITを送信・保存できませんでした');
+  expectExportsDisabled(false);
   const imported = { ...state(), name: 'GPX確認', points: [{ lat: 35.15, lng: 135.78, ele: 650 }, { lat: 35.1587, lng: 135.7861, ele: 760 }] };
   const file = new File([''], 'route.gpx'); Object.defineProperty(file, 'text', { value: async () => generateGPX(imported, imported.points, []) });
   const input = document.getElementById('file') as HTMLInputElement; Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();
@@ -113,6 +146,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.getElementById('poi-status')!.textContent).toContain('Overpassが混雑中');
   expect(document.getElementById('gap-note')!.hidden).toBe(true);
   expect(button('#export').disabled).toBe(true);
+  expectExportsDisabled(true);
   await vi.advanceTimersByTimeAsync(29999);
   expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 1);
   await vi.advanceTimersByTimeAsync(1);
@@ -135,6 +169,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   convChip.click(); expect(document.querySelectorAll('.chart-poi')).toHaveLength(0);
   expect(document.querySelector('.chart-gap')!.getAttribute('width')).toBe(gapWidth);
   button('#clear').click();
+  expectExportsDisabled(true);
   expect(document.querySelector('.chart-gap')).toBeNull();
   expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
 });

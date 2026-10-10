@@ -28,7 +28,9 @@ import { StatusMessages, type StatusKind } from './ui/status';
 import { installPopover } from './ui/popover';
 import { icon } from './ui/icons';
 import { installRouteDrag } from './ui/route-drag';
+import { installGarminDialog, sendGarminCourse } from './ui/garmin';
 mountUI();
+const showGarminInstructions = installGarminDialog();
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const status = new StatusMessages($('status'));
 const map = createMap('map', message => status.set('map', message, message.includes('できません') ? 'warn' : message.includes('中…') ? 'busy' : 'info'));
@@ -51,7 +53,8 @@ let samples: Sample[] = [];
 let resolvedTrack: Point[] = [];
 let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
-function syncExport() { document.querySelectorAll<HTMLButtonElement>('[data-action="export"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2); }
+let garminBusy = false;
+function syncExport() { document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy)); }
 function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
@@ -228,6 +231,18 @@ $('export').onclick = () => {
   const blob = new Blob([generateGPX(history.value, resolvedTrack, places, poiUI.exportPois)], { type: 'application/gpx+xml' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = gpxFilename(history.value.name); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   if (resolvedTrack.some(p => p.ele == null)) notify('標高欠測点はeleを省略して保存しました。');
+};
+$('garmin').onclick = async () => {
+  if (garminBusy || readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2) return;
+  const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  garminBusy = true; syncExport();
+  try {
+    await sendGarminCourse({ name: history.value.name, profile: history.value.profile, resolvedTrack, places, pois: poiUI.fitPois }, () => showGarminInstructions(trigger));
+  } catch (error) { notify(`FITを送信・保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
+  finally {
+    garminBusy = false; syncExport();
+    if (!$<HTMLDialogElement>('garmin-dialog').open && document.activeElement === document.body) trigger?.focus();
+  }
 };
 $('share').onclick = async () => {
   const url = new URL(location.href); url.hash = encodeRoute(history.value);

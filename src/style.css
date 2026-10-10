@@ -108,7 +108,7 @@ details[open] .chev { transform: rotate(180deg); }
 .note { font-size: 12px; color: var(--text-2); margin: 0; }
 
 /* フッター */
-.sb-foot { flex: none; display: grid; grid-template-columns: 1fr auto; gap: var(--sp1); padding: var(--sp1) var(--sp2) calc(var(--sp1) + env(safe-area-inset-bottom)); border-top: 1px solid var(--divider); background: var(--surface); }
+.sb-foot { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp1); padding: var(--sp1) var(--sp2) calc(var(--sp1) + env(safe-area-inset-bottom)); border-top: 1px solid var(--divider); background: var(--surface); }
 .btn { height: 48px; padding: 0 var(--sp2); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); font-size: 16px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp1); color: var(--primary); }
 .btn svg { width: 20px; height: 20px; }
 .btn:hover { background: var(--selected); }
@@ -256,3 +256,14 @@ button:disabled { opacity: .45; cursor: default; }
 #poi-status:empty { display: none; }
 .check-row { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 13px; color: var(--text-2); }
 .check-row input { width: 18px; height: 18px; flex: none; accent-color: var(--primary); }
+
+/* FIT export uses the existing light theme and keyboard focus tokens. */
+.sb-foot .btn { padding: 0 8px; font-size: 14px; white-space: nowrap; }
+.sb-foot .btn:not(.primary) svg { display: none; }
+.garmin-dialog { width: min(560px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; margin: auto; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); overflow-wrap: anywhere; }
+.garmin-dialog::backdrop { background: rgb(0 0 0 / 40%); }
+.garmin-dialog h2 { margin: 0 0 16px; font-size: 20px; }
+.garmin-dialog h3 { margin: 16px 0 8px; font-size: 16px; }
+.garmin-dialog p, .garmin-dialog ol { margin: 8px 0; }
+.garmin-dialog ol { padding-left: 24px; }
+.garmin-dialog .btn { margin-top: 8px; }
