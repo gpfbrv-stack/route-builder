@@ -1,8 +1,9 @@
 export const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
 export const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>';
 export const CONFIG = {
+  gsi: { tileLimit: 300, bridgeM: 30, bridgePenalty: 3, detourRatio: 2.5, detourExtraM: 1000 },
   fit: { speedKmh: { mtb: 12, gravel: 18, road: 25 } },
-  profiles: { mtb: { label: '山サイ', api: 'mtb', fallback: ['trekking'] }, gravel: { label: 'グラベル', api: 'gravel' }, road: { label: 'ロード', api: 'fastbike' } },
+  profiles: { mtb: { label: '山サイ', custom: 'mtb-jp', api: 'mtb', fallback: ['trekking-jp'] }, gravel: { label: 'グラベル', custom: 'gravel-jp', api: 'gravel' }, road: { label: 'ロード', custom: 'road-jp', api: 'fastbike' } },
   routing: { debounceMs: 500, concurrency: 2, timeoutMs: 30000, cacheSize: 512 },
   elevation: { zoom: 14, tileIds: ['dem5a_png', 'dem_png'], intervalM: 20, hysteresisM: 5 },
   places: { passRadiusM: 100, peakRadiusM: 150, marginDegrees: 0.003, debounceMs: 1200 },

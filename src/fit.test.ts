@@ -36,6 +36,18 @@ function expectPosition(record: RecordMesg, point: Point) {
 }
 
 describe('generateFitCourse', () => {
+  it('selects subSport by total routed distance per profile, independent of current selection', () => {
+    const messages = generate({ profile: 'mtb', legs: [
+      { profile: 'road', distance: 600 }, { profile: 'gravel', distance: 1000 }, { profile: 'road', distance: 600 },
+    ] });
+    expect(messages.courseMesgs![0].subSport).toBe('road');
+    // Only subSport changes: preserve the existing virtual speed policy.
+    expect(messages.lapMesgs![0].totalTimerTime).toBe(generate().lapMesgs![0].totalTimerTime);
+  });
+  it('uses route order for distance ties and the current profile when there is no distance', () => {
+    expect(generate({ legs: [{ profile: 'gravel', distance: 100 }, { profile: 'road', distance: 100 }] }).courseMesgs![0].subSport).toBe('gravelCycling');
+    expect(generate({ profile: 'road', legs: [{ profile: 'gravel', distance: 0 }] }).courseMesgs![0].subSport).toBe('road');
+  });
   it('round-trips course metadata, all records, physical units and lap totals through the SDK', () => {
     const messages = generate(), records = messages.recordMesgs!, lap = messages.lapMesgs![0];
     expect(messages.fileIdMesgs).toEqual([{ type: 'course', manufacturer: 'development', product: 0, serialNumber: defaults.serialNumber, timeCreated: new Date('2026-10-10T01:02:03Z') }]);

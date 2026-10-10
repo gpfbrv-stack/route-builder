@@ -43,6 +43,9 @@ button, input, select { font: inherit; color: inherit; }
 .seg button svg { width: 18px; height: 18px; }
 .seg button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
 .seg button:not([aria-pressed="true"]):hover { background: #e6e6e6; color: var(--text); }
+.mode-control { display: grid; gap: 8px; min-width: 0; font-size: 12px; }
+.seg-small button { min-width: 0; height: 32px; padding: 0 4px; font-size: 12px; white-space: nowrap; }
+.menu-pop .seg-small button { width: auto; justify-content: center; padding: 0 4px; font-size: 12px; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; min-height: 40px; font-size: 14px; }
 .toggle-row small { color: var(--text-2); font-size: 12px; }
 .switch { position: relative; width: 48px; height: 28px; flex: none; }
@@ -185,7 +188,7 @@ details[open] .chev { transform: rotate(180deg); }
   .layer-pop { right: 52px; width: min(248px, calc(100vw - 80px)); }
   .leaflet-bottom.leaflet-left { bottom: calc(var(--sheet-h, 168px) + 4px); transition: bottom .2s ease; }
   .leaflet-bottom.leaflet-right { bottom: calc(var(--sheet-h, 168px)); }
-  .menu-pop { position: absolute; top: 52px; right: 0; width: 200px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; display: none; }
+  .menu-pop { position: absolute; top: 52px; right: 0; width: min(320px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; display: none; }
   .menu-pop.open { display: block; }
   .menu-pop button { width: 100%; height: 44px; border: 0; background: transparent; border-radius: 6px; text-align: left; padding: 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
   .menu-pop button:hover { background: var(--surface-2); }
@@ -207,17 +210,31 @@ button:disabled { opacity: .45; cursor: default; }
 [data-action="clear"] { color: var(--error); }
 
 .status > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status > span:has(.detour-notice) { white-space: normal; overflow: visible; }
+.detour-notice, .detour-leg { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp1); }
+.detour-notice button, .detour-leg button { min-height: 40px; padding: 0 var(--sp1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--primary); cursor: pointer; }
+.detour-leg { grid-column: 2 / -1; font-size: 12px; color: var(--text-2); padding-bottom: var(--sp1); }
 .place-row { width: calc(100% + 16px); border: 0; background: transparent; text-align: left; font: inherit; color: inherit; }
 .row-copy { min-width: 0; text-align: left; }
 .row-copy > span { display: block; }
 .waypoint-focus { border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
+.waypoint-menu { position: relative; }
+.waypoint-menu > summary { display: grid; place-items: center; width: 40px; height: 40px; cursor: pointer; list-style: none; border-radius: var(--radius); }
+.waypoint-menu > summary::-webkit-details-marker { display: none; }
+.waypoint-actions { position: absolute; right: 0; top: 40px; z-index: 500; width: min(256px, 75vw); padding: var(--sp1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.waypoint-actions button, .waypoint-popup button { display: block; width: 100%; min-height: 40px; padding: var(--sp1); border: 0; border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; white-space: normal; cursor: pointer; }
+.waypoint-actions button:hover, .waypoint-popup button:hover { background: var(--surface-2); }
+.waypoint-popup { display: grid; gap: var(--sp1); }
+.edit-bar { max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; }
+.menu-pop [data-action="reprofile-all"] { height: auto; min-height: 44px; padding-block: var(--sp1); white-space: normal; }
 #places-status:empty { display: none; }
 .menu-pop .toggle-row { padding: 0 12px; min-height: 44px; }
 .sheet-dragging .sidebar, .sheet-dragging .m-tools, .sheet-dragging .leaflet-bottom { transition: none !important; }
 .fab-group { overflow: visible; }
 .fab-group .fab:first-child { border-radius: 8px 8px 0 0; }
 .fab-group .fab:last-child { border-radius: 0 0 8px 8px; }
-.route-line { cursor: grab; }
+.route-hit { cursor: grab; pointer-events: stroke; }
+.route-handle { pointer-events: none; }
 .route-dragging, .route-dragging .leaflet-interactive { cursor: grabbing !important; }
 @media (max-width: 767px) {
   .sidebar { padding-bottom: env(safe-area-inset-bottom); }

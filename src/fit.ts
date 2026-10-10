@@ -8,6 +8,8 @@ import type { Place, Poi, Point } from './types';
 export interface FitCourseInput {
   name: string;
   profile: Profile;
+  /** Actual routed distance per leg, used only for the course subSport. */
+  legs?: { profile: Profile; distance: number }[];
   resolvedTrack: Point[];
   places?: Place[];
   /** Visible, already grouped representatives (e.g. poiUI.exportPois). Empty when POI export is off. */
@@ -20,6 +22,16 @@ export interface FitCourseInput {
 const MAX_RECORDS = 10_000;
 const MAX_COURSE_POINTS = 100;
 const subSports = { mtb: 'mountain', gravel: 'gravelCycling', road: 'road' } as const;
+function dominantProfile(input: FitCourseInput): Profile {
+  const totals = new Map<Profile, number>();
+  for (const leg of input.legs ?? []) {
+    if (Number.isFinite(leg.distance) && leg.distance > 0) totals.set(leg.profile, (totals.get(leg.profile) ?? 0) + leg.distance);
+  }
+  let profile = input.profile, longest = 0;
+  // Ties retain the first profile encountered along the route.
+  for (const [candidate, length] of totals) if (length > longest) { profile = candidate; longest = length; }
+  return profile;
+}
 // Enum names are resolved to the numeric FIT values by Encoder using profile.js.
 const poiTypes = { michi: 'restArea', conv: 'store', shop: 'store', water: 'water', vend: 'water', wc: 'toilet' } as const;
 const priorities = { michi: 1, conv: 2, shop: 2, water: 3, vend: 4, wc: 5 };
@@ -91,7 +103,7 @@ export function generateFitCourse(input: FitCourseInput): Uint8Array {
   const write = <T extends Mesg>(message: Encodable<T>) => encoder.writeMesg(message);
   const startTime = new Date(Math.floor(input.timeCreated.getTime() / 1000) * 1000);
   write<FileIdMesg>({ mesgNum: mesgNum.FILE_ID, type: 'course', manufacturer: 'development', product: 0, timeCreated: startTime, serialNumber: input.serialNumber });
-  write<CourseMesg>({ mesgNum: mesgNum.COURSE, name: fitName(input.name), sport: 'cycling', subSport: subSports[input.profile] });
+  write<CourseMesg>({ mesgNum: mesgNum.COURSE, name: fitName(input.name), sport: 'cycling', subSport: subSports[dominantProfile(input)] });
 
   const track = input.resolvedTrack;
   // A valid FIT container with metadata only; no invented coordinates for an empty route.

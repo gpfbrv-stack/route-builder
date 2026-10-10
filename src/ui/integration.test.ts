@@ -5,7 +5,7 @@ import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false }));
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
@@ -13,7 +13,19 @@ vi.mock('../map', async importOriginal => {
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
-  return { ...actual, Router: class { route = async (points: Sample[]) => points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined })); } };
+  return { ...actual, Router: class {
+    detour: InstanceType<typeof actual.Router>['detour'] = async (a, b, profile, mode) => captured.detour && mode === 'road'
+      ? { key: actual.segmentKey(a, b, profile), osmM: 4500, gsiM: 1200 } : undefined;
+    cached = () => undefined;
+    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes) => {
+      captured.routeCalls++;
+      return points.slice(1).map((p, i) => {
+        const segment = { points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi' };
+        if (current()) resolved?.(i, segment);
+        return segment;
+      });
+    };
+  } };
 });
 afterAll(() => { captured.map?.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and undo', async () => {
@@ -62,12 +74,30 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelectorAll('.chart-poi')).toHaveLength(1);
   expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠'); expect(document.querySelector('#chart svg')).not.toBeNull();
+  // Existing waypoint drags share live routing but persist only the final drop.
+  const beforeMove = state(), callsBeforeMove = captured.routeCalls;
+  let movingMarker: L.Marker | undefined;
+  captured.map!.eachLayer(layer => {
+    if (layer instanceof leaflet.Marker && layer.getElement()?.querySelector('.wp-marker.goal')) movingMarker = layer;
+  });
+  movingMarker!.setLatLng([35.159, 135.787]).fire('drag');
+  expect(state()).toEqual(beforeMove);
+  expect(document.querySelector('.route-line')!.getAttribute('stroke-dasharray')).toBe('6 8');
+  await vi.advanceTimersByTimeAsync(1);
+  expect(captured.routeCalls).toBe(callsBeforeMove + 1);
+  expect(document.querySelector('.route-line')!.hasAttribute('stroke-dasharray')).toBe(false);
+  movingMarker!.setLatLng([35.1595, 135.788]).fire('drag');
+  await vi.advanceTimersByTimeAsync(399);
+  expect(captured.routeCalls).toBe(callsBeforeMove + 2); expect(state()).toEqual(beforeMove);
+  movingMarker!.setLatLng([35.16, 135.789]).fire('dragend');
+  expect(state().points[1]).toEqual({ lat: 35.16, lng: 135.789 });
+  button('#undo').click(); expect(state()).toEqual(beforeMove); await settle();
   const mapElement = document.getElementById('map')!; mapElement.setPointerCapture = vi.fn(); mapElement.releasePointerCapture = vi.fn(); mapElement.hasPointerCapture = () => true;
   const start = captured.map!.latLngToContainerPoint([35.15435, 135.78305]);
   for (const [type, delta] of [['pointerdown', 0], ['pointermove', 30], ['pointerup', 30]] as const) {
     const event = new MouseEvent(type, { clientX: start.x + delta, clientY: start.y + delta, button: 0, bubbles: true, cancelable: true });
     Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: 'mouse' }, isPrimary: { value: true } });
-    (type === 'pointerdown' ? document.querySelector('.route-line')! : document).dispatchEvent(event);
+    (type === 'pointerdown' ? document.querySelector('.route-hit')! : document).dispatchEvent(event);
     if (type === 'pointermove') expect(state().points).toHaveLength(2);
   }
   expect(state().points).toHaveLength(3);
@@ -76,8 +106,33 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelectorAll('.poi-marker,.poi-row,.chart-poi,.chart-gap')).toHaveLength(0);
   expect([...document.querySelectorAll('.chip .count')].every(n => n.textContent === '0')).toBe(true);
   button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
-  button('.m-top [data-profile="road"]').click(); expect(state().profile).toBe('road'); expect(document.querySelectorAll('[data-profile="road"][aria-pressed="true"]')).toHaveLength(2); await settle();
-  button('#menu-pop [data-follow]').click(); expect(state().followRoad).toBe(false); expect((document.getElementById('follow') as HTMLInputElement).checked).toBe(false); await settle();
+  const callsBeforeSelection = captured.routeCalls, shapeBeforeSelection = document.querySelector('.route-line')!.getAttribute('d');
+  button('.m-top [data-profile="road"]').click(); expect(state().profile).toBe('road'); expect(document.querySelectorAll('[data-profile="road"][aria-pressed="true"]')).toHaveLength(2);
+  expect(document.getElementById('status')!.textContent).toContain('これから引く区間をロードで計算します');
+  expectExportsDisabled(false); await settle();
+  expect(captured.routeCalls).toBe(callsBeforeSelection);
+  expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(shapeBeforeSelection);
+  expect(state().legProfiles).toEqual(['mtb']);
+  expect(document.querySelector('[data-waypoint="0"] .leg-profile')!.textContent).toContain('山サイ');
+  expect(document.querySelector('[data-waypoint="1"] .leg-profile')).toBeNull();
+  button('[data-waypoint="0"] .waypoint-focus').click();
+  button('.waypoint-popup button:last-child').click(); expect(state().legProfiles).toEqual(['road']);
+  button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  for (const selector of ['[data-waypoint="0"] .waypoint-actions button:first-child', '#menu-pop [data-action="reprofile-all"]', '#reprofile-all']) {
+    button(selector).click(); expect(state().legProfiles).toEqual(['road']);
+    button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  }
+  const followCalls = captured.routeCalls, followPath = document.querySelector('.route-line'), drawSpy = vi.spyOn(leaflet.Polyline.prototype, 'setLatLngs');
+  button('#menu-pop [data-mode="straight"]').click(); expect(state().mode).toBe('straight'); expect(button('.controls [data-mode="straight"]').getAttribute('aria-pressed')).toBe('true'); await settle();
+  expect(captured.routeCalls).toBe(followCalls); expect(drawSpy).not.toHaveBeenCalled(); drawSpy.mockRestore();
+  expect(document.querySelector('.route-line')).toBe(followPath); expectExportsDisabled(false);
+  expect(state().legMode).toEqual(['road']);
+  expect(document.getElementById('status')!.textContent).toContain('これから引く区間を直線で引きます');
+  for (const selector of ['[data-waypoint="0"] .waypoint-actions button:first-child', '#menu-pop [data-action="reprofile-all"]', '#reprofile-all']) {
+    button(selector).click(); expect(state().legMode).toEqual(['straight']); expect(state().legProfiles).toEqual(['road']);
+    expect(document.querySelector('.leg-profile')!.textContent).toContain('直線');
+    button('#undo').click(); expect(state().legMode).toEqual(['road']); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  }
   const point = document.querySelector<HTMLButtonElement>('[data-waypoint="1"] .del')!; point.click(); expect(state().points).toHaveLength(1); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   button('#share').click(); await settle(); expect(copy).toHaveBeenCalledOnce(); expect((document.getElementById('share-url') as HTMLInputElement).hidden).toBe(true);
   copy.mockRejectedValueOnce(new Error('denied')); button('#share').click(); await settle(); const share = document.getElementById('share-url') as HTMLInputElement; expect(share.hidden).toBe(false); expect(share.selectionEnd).toBe(share.value.length);
@@ -117,7 +172,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   };
   button('#garmin').click();
   const fit = await sharedFit();
-  expect(fit.courseMesgs![0].subSport).toBe('road'); expect(fit.recordMesgs).toHaveLength(2);
+  expect(fit.courseMesgs![0].subSport).toBe('mountain'); expect(fit.recordMesgs).toHaveLength(2);
   expect(fit.coursePointMesgs!.map(p => p.type)).toEqual(['summit', 'store']);
   button('#poi-gpx').click(); button('.peek-row [data-action="garmin"]').click();
   expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']);
@@ -130,8 +185,35 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   fitShare.mockRejectedValueOnce(new Error('share failed')); button('#garmin').click(); await settle();
   expect(document.getElementById('status')!.textContent).toContain('FITを送信・保存できませんでした');
   expectExportsDisabled(false);
+  // All mode selectors affect only new legs; redrawing preserves profiles and is undoable.
+  const beforeGsi = state(), beforeGsiCalls = captured.routeCalls;
+  for (const mode of ['gsi', 'road', 'straight', 'gsi']) {
+    button(`#menu-pop [data-mode="${mode}"]`).click();
+    expect(button(`.controls [data-mode="${mode}"]`).getAttribute('aria-pressed')).toBe('true');
+    expect(state().legMode).toEqual(beforeGsi.legMode);
+    expect(state().legProfiles).toEqual(beforeGsi.legProfiles);
+    await settle(); expect(captured.routeCalls).toBe(beforeGsiCalls);
+  }
+  button('#reprofile-all').click(); await settle();
+  expect(state().legMode).toEqual(['gsi']); expect(state().legProfiles).toEqual(['road']);
+  expect(document.querySelector('.leg-profile')!.textContent).toContain('地理院');
+  expect(document.getElementById('status')!.textContent).toContain('地理院の道で引いた区間は通行可否を確認していません');
+  expect(document.getElementById('status')!.classList.contains('warn')).toBe(false);
+  expect(document.querySelector('.leaflet-control-attribution')!.textContent).toContain('道路中心線: 地理院タイル');
+  // GSI-only FIT falls back to the current profile even though the leg retains road.
+  button('.m-top [data-profile="gravel"]').click(); button('#garmin').click();
+  expect((await sharedFit()).courseMesgs![0].subSport).toBe('gravelCycling');
+  // A short road leg determines FIT subSport despite the longer GSI leg.
+  button('.m-top [data-profile="mtb"]').click(); button('#menu-pop [data-mode="road"]').click();
+  captured.map!.fire('click', { latlng: { lat: 35.1601, lng: 135.789 } }); await settle();
+  expect(state().legMode).toEqual(['gsi', 'road']); button('#garmin').click();
+  expect((await sharedFit()).courseMesgs![0].subSport).toBe('mountain');
+  button('#undo').click(); button('#undo').click(); await settle();
+  expect(state().legMode).toEqual(beforeGsi.legMode);
+  expect(document.querySelector('.leaflet-control-attribution')!.textContent).not.toContain('道路中心線');
+  button('.m-top [data-profile="road"]').click();
   captured.alternative = true;
-  button('#menu-pop [data-follow]').click();
+  button('#menu-pop [data-mode="road"]').click();
   captured.map!.fire('click', { latlng: { lat: 35.16, lng: 135.79 } }); await settle();
   expect(document.getElementById('status')!.textContent).toContain('一部区間を代替経路(trekking)で計算しました');
   expect(document.getElementById('status')!.classList.contains('warn')).toBe(true);
@@ -146,6 +228,14 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   const file = new File([''], 'route.gpx'); Object.defineProperty(file, 'text', { value: async () => generateGPX(imported, imported.points, []) });
   const input = document.getElementById('file') as HTMLInputElement; Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();
   expect(state().importedTrack).toHaveLength(2); expect(state().name).toBe('GPX確認'); expect(button('#export').disabled).toBe(false);
+  expect(state().legProfiles).toEqual(['road']);
+  const importedShape = document.querySelector('.route-line')!.getAttribute('d'), importedCalls = captured.routeCalls;
+  button('.m-top [data-profile="gravel"]').click();
+  button('.controls [data-mode="straight"]').click(); await settle();
+  expect(state().legMode).toEqual(['road']);
+  expect(state().importedTrack).toEqual(imported.points); expect(state().legProfiles).toEqual(['road']);
+  expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(importedShape);
+  expect(captured.routeCalls).toBe(importedCalls); expectExportsDisabled(false);
   const hash = encodeRoute({ ...imported, name: '共有確認' }); window.history.replaceState(null, '', hash); window.dispatchEvent(new HashChangeEvent('hashchange')); await settle(); expect(state().name).toBe('共有確認'); expect(location.hash).toBe('');
   button('#clear').click(); expect(state().points).toHaveLength(0); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   captured.map!.fire('click', { latlng: { lat: 35.15, lng: 135.78 } }); await settle();
@@ -185,4 +275,22 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expectExportsDisabled(true);
   expect(document.querySelector('.chart-gap')).toBeNull();
   expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
+  // Exercise the main.ts wiring, including persistence, one-step Undo and clearing.
+  captured.detour = true;
+  button('.controls [data-mode="road"]').click();
+  for (const lat of [36, 36.01, 36.02]) captured.map!.fire('click', { latlng: { lat, lng: 138 } });
+  await settle();
+  expect(document.querySelectorAll('.detour-leg')).toHaveLength(2);
+  expect(document.querySelector('.detour-notice')!.textContent).toContain('2区間');
+  button('.detour-notice button').click();
+  expect(state().legMode).toEqual(['gsi', 'gsi']);
+  expect(document.querySelector('.detour-leg')).toBeNull();
+  button('#undo').click(); expect(state().legMode).toEqual(['road', 'road']); await settle();
+  expect(document.querySelector('.detour-notice')).toBeNull();
+  captured.map!.fire('click', { latlng: { lat: 36.03, lng: 138 } }); await settle();
+  expect(document.querySelectorAll('.detour-leg')).toHaveLength(1);
+  const name = document.getElementById('route-name') as HTMLInputElement;
+  name.value = 'edited'; name.dispatchEvent(new Event('change'));
+  expect(document.querySelector('.detour-leg')).toBeNull();
+  captured.detour = false;
 });
