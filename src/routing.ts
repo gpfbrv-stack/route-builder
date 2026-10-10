@@ -12,6 +12,9 @@ export class Router {
   private pending = new Map<string, Promise<Segment>>();
   private queue = new RequestQueue(CONFIG.routing.concurrency);
   constructor(private request: typeof fetch = (...args) => fetch(...args), private registry = new ProfileRegistry(request)) {}
+  cached(a: Point, b: Point, profile: Profile): Segment | undefined {
+    return this.cache.get(segmentKey(a, b, profile));
+  }
   segment(a: Point, b: Point, profile: Profile): Promise<Segment> {
     if (distance(a, b) < 0.1) return Promise.resolve({ points: [a, b], fallback: false });
     const key = segmentKey(a, b, profile);
@@ -57,7 +60,7 @@ export class Router {
     const params = new URLSearchParams({ lonlats: `${a.lng},${a.lat}|${b.lng},${b.lat}`, profile, alternativeidx: '0', format: 'geojson' });
     return this.request(`https://brouter.de/brouter?${params}`, { signal: AbortSignal.timeout(CONFIG.routing.timeoutMs) });
   }
-  async route(points: Point[], profiles: Profile | Profile[], current = () => true): Promise<Segment[]> {
+  async route(points: Point[], profiles: Profile | Profile[], current = () => true, resolved?: (index: number, segment: Segment) => void): Promise<Segment[]> {
     if (Array.isArray(profiles) && profiles.length !== Math.max(0, points.length - 1)) throw new Error('区間の走り方の数が不正です');
     const results: Segment[] = [];
     let next = 0;
@@ -65,6 +68,7 @@ export class Router {
       while (current() && next < points.length - 1) {
         const i = next++;
         results[i] = await this.segment(points[i], points[i + 1], typeof profiles === 'string' ? profiles : profiles[i]);
+        if (current()) resolved?.(i, results[i]);
       }
     }));
     return results;

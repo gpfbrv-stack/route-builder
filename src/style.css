@@ -226,7 +226,8 @@ button:disabled { opacity: .45; cursor: default; }
 .fab-group { overflow: visible; }
 .fab-group .fab:first-child { border-radius: 8px 8px 0 0; }
 .fab-group .fab:last-child { border-radius: 0 0 8px 8px; }
-.route-line { cursor: grab; }
+.route-hit { cursor: grab; pointer-events: stroke; }
+.route-handle { pointer-events: none; }
 .route-dragging, .route-dragging .leaflet-interactive { cursor: grabbing !important; }
 @media (max-width: 767px) {
   .sidebar { padding-bottom: env(safe-area-inset-bottom); }

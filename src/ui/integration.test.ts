@@ -13,7 +13,17 @@ vi.mock('../map', async importOriginal => {
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
-  return { ...actual, Router: class { route = async (points: Sample[]) => { captured.routeCalls++; return points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined })); }; } };
+  return { ...actual, Router: class {
+    cached = () => undefined;
+    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved) => {
+      captured.routeCalls++;
+      return points.slice(1).map((p, i) => {
+        const segment = { points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined };
+        if (current()) resolved?.(i, segment);
+        return segment;
+      });
+    };
+  } };
 });
 afterAll(() => { captured.map?.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and undo', async () => {
@@ -62,12 +72,30 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelectorAll('.chart-poi')).toHaveLength(1);
   expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠'); expect(document.querySelector('#chart svg')).not.toBeNull();
+  // Existing waypoint drags share live routing but persist only the final drop.
+  const beforeMove = state(), callsBeforeMove = captured.routeCalls;
+  let movingMarker: L.Marker | undefined;
+  captured.map!.eachLayer(layer => {
+    if (layer instanceof leaflet.Marker && layer.getElement()?.querySelector('.wp-marker.goal')) movingMarker = layer;
+  });
+  movingMarker!.setLatLng([35.159, 135.787]).fire('drag');
+  expect(state()).toEqual(beforeMove);
+  expect(document.querySelector('.route-line')!.getAttribute('stroke-dasharray')).toBe('6 8');
+  await vi.advanceTimersByTimeAsync(1);
+  expect(captured.routeCalls).toBe(callsBeforeMove + 1);
+  expect(document.querySelector('.route-line')!.hasAttribute('stroke-dasharray')).toBe(false);
+  movingMarker!.setLatLng([35.1595, 135.788]).fire('drag');
+  await vi.advanceTimersByTimeAsync(399);
+  expect(captured.routeCalls).toBe(callsBeforeMove + 2); expect(state()).toEqual(beforeMove);
+  movingMarker!.setLatLng([35.16, 135.789]).fire('dragend');
+  expect(state().points[1]).toEqual({ lat: 35.16, lng: 135.789 });
+  button('#undo').click(); expect(state()).toEqual(beforeMove); await settle();
   const mapElement = document.getElementById('map')!; mapElement.setPointerCapture = vi.fn(); mapElement.releasePointerCapture = vi.fn(); mapElement.hasPointerCapture = () => true;
   const start = captured.map!.latLngToContainerPoint([35.15435, 135.78305]);
   for (const [type, delta] of [['pointerdown', 0], ['pointermove', 30], ['pointerup', 30]] as const) {
     const event = new MouseEvent(type, { clientX: start.x + delta, clientY: start.y + delta, button: 0, bubbles: true, cancelable: true });
     Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: 'mouse' }, isPrimary: { value: true } });
-    (type === 'pointerdown' ? document.querySelector('.route-line')! : document).dispatchEvent(event);
+    (type === 'pointerdown' ? document.querySelector('.route-hit')! : document).dispatchEvent(event);
     if (type === 'pointermove') expect(state().points).toHaveLength(2);
   }
   expect(state().points).toHaveLength(3);

@@ -122,6 +122,19 @@ it('stops scheduling obsolete segments', async () => {
   expect(await testRouter(fetcher).route(points, 'mtb', () => false)).toEqual([]);
   expect(fetcher).not.toHaveBeenCalled();
 });
+it('publishes each resolved leg before the full route and never publishes an obsolete result', async () => {
+  const replies: ((response: Response) => void)[] = [];
+  const router = testRouter(vi.fn(() => new Promise<Response>(resolve => replies.push(resolve))));
+  let current = true;
+  const resolved = vi.fn(), route = router.route(points.slice(0, 3), 'road', () => current, resolved);
+  await vi.waitFor(() => expect(replies).toHaveLength(2));
+  replies[1](response());
+  await vi.waitFor(() => expect(resolved).toHaveBeenCalledTimes(1));
+  expect(resolved.mock.calls[0][0]).toBe(1);
+  expect(router.cached(points[1], points[2], 'road')).toBe(resolved.mock.calls[0][1]);
+  current = false; replies[0](response()); await route;
+  expect(resolved).toHaveBeenCalledTimes(1);
+});
 it('calls browser fetch without a Router receiver', async () => {
   vi.stubGlobal('fetch', function(this: unknown) { if (this instanceof Router) throw new Error('Illegal invocation'); return Promise.resolve(response()); });
   try { expect((await testRouter().segment(points[0], points[1], 'mtb')).fallback).toBe(false); }

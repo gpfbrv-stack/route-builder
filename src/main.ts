@@ -28,6 +28,8 @@ import { StatusMessages, type StatusKind } from './ui/status';
 import { installPopover } from './ui/popover';
 import { icon } from './ui/icons';
 import { installRouteDrag } from './ui/route-drag';
+import { RouteLine } from './ui/route-line';
+import { RoutePreview } from './ui/route-preview';
 import { installGarminDialog, sendGarminCourse, preloadFit } from './ui/garmin';
 mountUI();
 const showGarminInstructions = installGarminDialog();
@@ -39,10 +41,10 @@ document.querySelectorAll('#menu-pop [data-action]').forEach(button => button.ad
 const sheet = installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
 new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 const markers = L.layerGroup().addTo(map);
-const casing = L.polyline([], { color: '#ffffff', weight: 11, interactive: false }).addTo(map);
-const line = L.polyline([], { color: '#0017c1', weight: 6, className: 'route-line' }).addTo(map);
-const setLine = (points: Point[]) => { const ll: L.LatLngExpression[] = points.map(p => [p.lat, p.lng]); casing.setLatLngs(ll); line.setLatLngs(ll); };
 const router = new Router();
+const routeLine = new RouteLine(map, router);
+const line = routeLine.hit;
+const livePreview = new RoutePreview(router, state => routeLine.update(state), (index, segment) => routeLine.resolve(index, segment));
 const dem = new DemProvider();
 const osmProvider = new OsmProvider();
 const placeMarkers = L.layerGroup().addTo(map);
@@ -122,14 +124,15 @@ const calculate = debounce(async (version: number) => {
   if (state.importedTrack) notify('GPXの形状を保持中。経由点の編集・区間の引き直しでルートを再計算します。');
   else if (state.followRoad && points.length > 1) {
     notify('道に沿ったルートを計算中…', 'busy');
-    const segments = await router.route(points, state.legProfiles, () => version === revision);
+    const segments = await router.route(points, state.legProfiles, () => version === revision, (index, segment) => {
+      routeLine.resolveState(state, index, segment);
+    });
     if (version !== revision) return;
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
     const warnings = routingWarnings(segments, state.legProfiles);
     notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
-  setLine(points);
   segmentShapes = state.importedTrack ? [] : shapes;
   $('summary').innerHTML = `${(routeLength(points) / 1000).toFixed(1)}<small>km</small>`;
   findPlaces(points, version);
@@ -169,7 +172,7 @@ function updateWaypointMetrics(track: Point[]) {
   });
 }
 function render() {
-  routeDrag.cancel(); segmentShapes = [];
+  routeDrag.cancel(); livePreview.cancel(); segmentShapes = [];
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
   $('summary').innerHTML = '—<small>km</small>';
@@ -194,7 +197,14 @@ function render() {
   state.points.forEach((point, i) => {
     const cls = i === 0 ? 'start' : i === state.points.length - 1 ? 'goal' : '', badge = i === 0 ? 'S' : i === state.points.length - 1 ? 'G' : String(i + 1);
     const marker = L.marker([point.lat, point.lng], { draggable: true, title: `経由点 ${i + 1}`, icon: L.divIcon({ className: '', html: `<div class="wp-marker ${cls}">${badge}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(markers);
-    marker.on('dragend', () => { const p = marker.getLatLng(); change({ ...history.value, points: history.value.points.map((old, index) => index === i ? { lat: p.lat, lng: p.lng } : old) }); });
+    const markerRevision = revision;
+    const movedState = () => {
+      const p = marker.getLatLng();
+      return { ...history.value, importedTrack: undefined, importedPlaces: undefined,
+        points: history.value.points.map((old, index) => index === i ? { lat: p.lat, lng: p.lng } : old) };
+    };
+    marker.on('drag', () => { if (markerRevision === revision) livePreview.update(movedState(), i); });
+    marker.on('dragend', () => { if (markerRevision === revision) change(movedState()); });
     const button = document.createElement('button'); button.textContent = `経由点 ${i + 1} を削除`; button.onclick = () => { remove(i); map.closePopup(); };
     const popup = document.createElement('div'); popup.className = 'waypoint-popup'; popup.append(button);
     if (i < state.legProfiles.length) {
@@ -227,11 +237,14 @@ function render() {
     menu.addEventListener('keydown', e => { if (e.key === 'Escape') { menu.open = false; toggle.focus(); } });
     item.append(label, focus, menu); $('waypoints').append(item);
   });
-  setLine(state.importedTrack ?? state.points);
+  routeLine.update(state);
   calculate(revision);
 }
-const routeDrag = installRouteDrag(map, line, () => ({ shapes: segmentShapes, points: history.value.points, revision, enabled: !history.value.importedTrack && segmentShapes.length > 0 }), (index, point) => {
+const routeDrag = installRouteDrag(map, line, () => ({ shapes: routeLine.shapes, points: history.value.points, revision, enabled: !history.value.importedTrack && routeLine.shapes.length > 0 }), (index, point) => {
   change(insertWaypoint(history.value, index, point));
+}, {
+  update: (index, point) => livePreview.update(insertWaypoint(history.value, index, point), index),
+  cancel: () => { livePreview.cancel(); routeLine.update(history.value); },
 });
 map.on('click', (event: L.LeafletMouseEvent) => change(insertWaypoint(history.value, history.value.points.length, { lat: event.latlng.lat, lng: event.latlng.lng })));
 $('profile').onchange = () => {
@@ -257,7 +270,7 @@ $('file').onchange = async () => {
   try {
     if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
     const imported = parseGPX(await file.text(), history.value.profile); change(imported.state, true);
-    setLine(imported.track); $('fit').click();
+    $('fit').click();
   } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
 };
