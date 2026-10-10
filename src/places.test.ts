@@ -26,3 +26,14 @@ it('caches bbox results but refilters for each route', async () => {
   await provider.get(route); await provider.get(route);
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+it('uses the shared response while preserving place radii and filtering cached nodes for the original line', async () => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ elements: [
+    { type: 'node', id: 1, lat: 35.01, lon: 135.001, tags: { mountain_pass: 'yes', name: '峠' } },
+    { type: 'node', id: 2, lat: 35.01, lon: 135.001, tags: { shop: 'convenience' } },
+  ] })));
+  const provider = new PlaceProvider(fetcher);
+  expect((await provider.get(route)).map(p => p.id)).toEqual([1]);
+  const bent = [route[0], { lat: 35.01, lng: 134.9998 }, route[1]];
+  expect(await provider.get(bent)).toEqual([]);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

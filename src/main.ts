@@ -11,7 +11,8 @@ import { Router, joinSegments } from './routing';
 import { History } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import type { RouteState, Point, Place } from './types';
-import { PlaceProvider } from './places';
+import { filterPlaces } from './places';
+import { OsmProvider } from './osm';
 import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
@@ -39,7 +40,7 @@ const line = L.polyline([], { color: '#0017c1', weight: 6, className: 'route-lin
 const setLine = (points: Point[]) => { const ll: L.LatLngExpression[] = points.map(p => [p.lat, p.lng]); casing.setLatLngs(ll); line.setLatLngs(ll); };
 const router = new Router();
 const dem = new DemProvider();
-const placeProvider = new PlaceProvider();
+const osmProvider = new OsmProvider();
 const placeMarkers = L.layerGroup().addTo(map);
 let places: Place[] = [];
 const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
@@ -69,17 +70,22 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   if (version !== revision || points.length < 2) return;
   $('places-status').textContent = '峠・山を検索中…';
   try {
-    const found = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : await placeProvider.get(points, () => version === revision);
+    const found = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : filterPlaces((await osmProvider.get(points, () => version === revision, retrying => {
+      if (version !== revision) return;
+      const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
+      status.set('osm', message, 'warn'); $('places-status').textContent = message;
+    })).places, points);
     for (const place of found) {
       if (version !== revision) return;
       if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
     }
     if (version !== revision) return;
-    places = found; renderPlaces();
+    status.set('osm', ''); places = found; renderPlaces();
     $('places-status').textContent = found.length ? '' : 'ルート近傍に登録された峠・山は見つかりませんでした。';
   } catch (error) {
     if (version !== revision) return;
     places = []; renderPlaces(); $('places-status').textContent = `峠・山を取得できませんでした。${error instanceof Error ? error.message : ''}`;
+    status.set('osm', $('places-status').textContent, 'warn');
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
@@ -150,6 +156,7 @@ function render() {
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
   $('summary').innerHTML = '—<small>km</small>';
   status.set('notice', '');
+  status.set('osm', '');
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。GPX保存をご利用ください。', 'warn');
   document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.value = history.value.name);
   samples = []; updateChart(); renderStats(); status.set('elevation', '');

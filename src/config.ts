@@ -5,6 +5,7 @@ export const CONFIG = {
   routing: { debounceMs: 500, concurrency: 2, timeoutMs: 30000, cacheSize: 512 },
   elevation: { zoom: 14, tileIds: ['dem5a_png', 'dem_png'], intervalM: 20, hysteresisM: 5 },
   places: { passRadiusM: 100, peakRadiusM: 150, marginDegrees: 0.003, debounceMs: 1200 },
+  poi: { radii: { conv: 300, shop: 300, vend: 100, water: 200, wc: 200, michi: 500 } },
 };
 export type Profile = keyof typeof CONFIG.profiles;
 export const BASE_LAYERS = [
