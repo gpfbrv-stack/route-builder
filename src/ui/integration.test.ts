@@ -5,7 +5,7 @@ import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined }));
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
@@ -13,7 +13,7 @@ vi.mock('../map', async importOriginal => {
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
-  return { ...actual, Router: class { route = async (points: Sample[]) => points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: false })); } };
+  return { ...actual, Router: class { route = async (points: Sample[]) => points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined })); } };
 });
 afterAll(() => { captured.map?.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and undo', async () => {
@@ -105,6 +105,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
   Object.defineProperty(navigator, 'share', { configurable: true, value: fitShare });
   const sharedFit = async () => {
+    await vi.dynamicImportSettled();
     const reading = new Promise<ArrayBuffer>((resolve, reject) => {
       const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject;
       reader.readAsArrayBuffer(fitShare.mock.lastCall![0].files[0]);
@@ -129,6 +130,18 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   fitShare.mockRejectedValueOnce(new Error('share failed')); button('#garmin').click(); await settle();
   expect(document.getElementById('status')!.textContent).toContain('FITを送信・保存できませんでした');
   expectExportsDisabled(false);
+  captured.alternative = true;
+  button('#menu-pop [data-follow]').click();
+  captured.map!.fire('click', { latlng: { lat: 35.16, lng: 135.79 } }); await settle();
+  expect(document.getElementById('status')!.textContent).toContain('一部区間を代替経路(trekking)で計算しました');
+  expect(document.getElementById('status')!.classList.contains('warn')).toBe(true);
+  captured.straight = true;
+  captured.map!.fire('click', { latlng: { lat: 35.17, lng: 135.8 } }); await settle();
+  expect(document.getElementById('status')!.textContent).toContain('該当区間は直線で表示しています');
+  expect(document.getElementById('status')!.textContent).toContain('一部区間を代替経路(trekking)で計算しました');
+  captured.alternative = captured.straight = false;
+  button('#undo').click(); button('#undo').click(); await settle();
+  expect(document.getElementById('status')!.textContent).not.toContain('代替経路');
   const imported = { ...state(), name: 'GPX確認', points: [{ lat: 35.15, lng: 135.78, ele: 650 }, { lat: 35.1587, lng: 135.7861, ele: 760 }] };
   const file = new File([''], 'route.gpx'); Object.defineProperty(file, 'text', { value: async () => generateGPX(imported, imported.points, []) });
   const input = document.getElementById('file') as HTMLInputElement; Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();

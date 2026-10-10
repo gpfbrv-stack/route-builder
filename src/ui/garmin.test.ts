@@ -12,17 +12,21 @@ beforeEach(() => {
   localStorage.clear(); document.body.innerHTML = '<div id="app"></div>'; mountUI();
   share.mockReset().mockResolvedValue(undefined); canShare.mockReset().mockReturnValue(false); show.mockReset();
   vi.stubGlobal('navigator', { share, canShare });
-  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:fit'), revokeObjectURL: vi.fn() });
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = vi.fn(() => 'blob:fit');
+    static revokeObjectURL = vi.fn();
+  });
   downloaded = '';
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloaded = this.download; });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-it('shares a valid FIT File synchronously with its title and the GPX filename rule', async () => {
+it('shares a valid FIT File after loading the encoder, with its title and the GPX filename rule', async () => {
   canShare.mockReturnValue(true);
   const sending = sendGarminCourse(input, show);
-  expect(share).toHaveBeenCalledOnce(); // Before any await: retain user activation.
+  expect(share).not.toHaveBeenCalled();
   await sending;
+  expect(share).toHaveBeenCalledOnce();
   const data = share.mock.calls[0][0], file = data.files[0] as File;
   expect(data.title).toBe(input.name);
   expect(file.name).toBe(gpxFilename(input.name).replace(/\.gpx$/, '.fit'));

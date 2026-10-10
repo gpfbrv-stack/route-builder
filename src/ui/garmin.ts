@@ -1,4 +1,4 @@
-import { generateFitCourse, type FitCourseInput } from '../fit';
+import type { FitCourseInput } from '../fit';
 import { gpxFilename } from '../gpx';
 
 const instructionsKey = 'route-builder-garmin-hide-instructions';
@@ -18,8 +18,12 @@ export function installGarminDialog() {
   };
 }
 
-/** Keep generation synchronous so share() retains the button's user activation. */
+let fitModule: Promise<typeof import('../fit')> | null = null;
+export function preloadFit() { fitModule ??= import('../fit'); fitModule.catch(() => { fitModule = null; }); return fitModule; }
+
+/** Load the FIT encoder only when the user sends a course. */
 export async function sendGarminCourse(input: Omit<FitCourseInput, 'timeCreated' | 'serialNumber'>, showInstructions: () => void) {
+  const { generateFitCourse } = await preloadFit();
   const serialNumber = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
   const bytes = generateFitCourse({ ...input, timeCreated: new Date(), serialNumber });
   const file = new File([new Uint8Array(bytes)], gpxFilename(input.name).replace(/\.gpx$/, '.fit'), { type: 'application/octet-stream' });

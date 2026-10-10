@@ -28,7 +28,7 @@ import { StatusMessages, type StatusKind } from './ui/status';
 import { installPopover } from './ui/popover';
 import { icon } from './ui/icons';
 import { installRouteDrag } from './ui/route-drag';
-import { installGarminDialog, sendGarminCourse } from './ui/garmin';
+import { installGarminDialog, sendGarminCourse, preloadFit } from './ui/garmin';
 mountUI();
 const showGarminInstructions = installGarminDialog();
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -54,7 +54,10 @@ let resolvedTrack: Point[] = [];
 let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
 let garminBusy = false;
-function syncExport() { document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy)); }
+function syncExport() {
+  document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy));
+  if (readyRevision === revision && resolvedTrack.length >= 2) void preloadFit();
+}
 function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
@@ -123,7 +126,11 @@ const calculate = debounce(async (version: number) => {
     if (version !== revision) return;
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
-    notify(segments.some(s => s.fallback) ? '一部区間を取得できませんでした。該当区間は直線で表示しています。' : 'ルートを更新しました。', segments.some(s => s.fallback) ? 'warn' : 'info');
+    const warnings: string[] = [];
+    if (segments.some(s => s.fallback)) warnings.push('一部区間を取得できませんでした。該当区間は直線で表示しています。');
+    const alternatives = [...new Set(segments.filter(s => !s.fallback && s.profileUsed && s.profileUsed !== CONFIG.profiles[state.profile].api).map(s => s.profileUsed))];
+    if (alternatives.length) warnings.push(`一部区間を代替経路(${alternatives.join(', ')})で計算しました`);
+    notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   setLine(points);
   segmentShapes = state.importedTrack ? [] : shapes;
