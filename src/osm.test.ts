@@ -38,8 +38,16 @@ it('combines the unchanged place bbox selectors with every POI around selector',
   expect(query).toContain(`node["mountain_pass"="yes"](${bbox})`);
   expect(query).toContain(`node["natural"="saddle"][name](${bbox})`);
   expect(query).toContain(`node["natural"="peak"][name](${bbox})`);
-  expect(query.match(/nwr\(around:500,/g)).toHaveLength(10);
-  expect(query).toContain('35.118,135.7706,35.1587,135.7861,35.19,135.776');
+  expect(query.match(/nwr\(around:300,/g)).toHaveLength(2);
+  expect(query.match(/nwr\(around:100,/g)).toHaveLength(2);
+  expect(query.match(/nwr\(around:200,/g)).toHaveLength(4);
+  expect(query.match(/nwr\(around:500,/g)).toHaveLength(2);
+  const line = '35.118,135.7706,35.1587,135.7861,35.19,135.776';
+  expect(query).toContain('nwr(around:300,' + line + ')["shop"="convenience"]');
+  expect(query).toContain('nwr(around:100,' + line + ')["amenity"="vending_machine"]');
+  expect(query).toContain('nwr(around:200,' + line + ')["amenity"="drinking_water"]');
+  expect(query).toContain('nwr(around:200,' + line + ')["amenity"="toilets"]');
+  expect(query).toContain('nwr(around:500,' + line + ')["name"~"^道の駅"]');
   for (const tag of ['convenience', 'supermarket|general|grocery|greengrocer|bakery|deli', 'vending_machine', 'drinks', 'drinking_water', 'water_tap', 'spring', 'toilets', '^道の駅', 'rest_area|services']) expect(query).toContain(tag);
   expect(query.endsWith('out body center;')).toBe(true);
 });

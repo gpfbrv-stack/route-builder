@@ -13,6 +13,8 @@ import { routeLength, nearestOnRoute, distance } from './geo';
 import type { RouteState, Point, Place } from './types';
 import { filterPlaces } from './places';
 import { OsmProvider } from './osm';
+import { preparePois } from './poi';
+import { installPoiUI } from './ui/poi';
 import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
@@ -42,6 +44,7 @@ const router = new Router();
 const dem = new DemProvider();
 const osmProvider = new OsmProvider();
 const placeMarkers = L.layerGroup().addTo(map);
+const poiUI = installPoiUI(map);
 let places: Place[] = [];
 const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
 let samples: Sample[] = [];
@@ -69,12 +72,17 @@ function renderPlaces() {
 const findPlaces = debounce(async (points: Point[], version: number) => {
   if (version !== revision || points.length < 2) return;
   $('places-status').textContent = '峠・山を検索中…';
+  poiUI.message('補給・休憩を検索中…');
+  const imported = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : undefined;
   try {
-    const found = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : filterPlaces((await osmProvider.get(points, () => version === revision, retrying => {
+    const result = await osmProvider.get(points, () => version === revision, retrying => {
       if (version !== revision) return;
       const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
-      status.set('osm', message, 'warn'); $('places-status').textContent = message;
-    })).places, points);
+      status.set('osm', message, 'warn'); $('places-status').textContent = message; poiUI.message(message);
+    });
+    if (version !== revision) return;
+    poiUI.set(preparePois(result.pois), routeLength(points));
+    const found = imported ?? filterPlaces(result.places, points);
     for (const place of found) {
       if (version !== revision) return;
       if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
@@ -84,8 +92,11 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
     $('places-status').textContent = found.length ? '' : 'ルート近傍に登録された峠・山は見つかりませんでした。';
   } catch (error) {
     if (version !== revision) return;
-    places = []; renderPlaces(); $('places-status').textContent = `峠・山を取得できませんでした。${error instanceof Error ? error.message : ''}`;
-    status.set('osm', $('places-status').textContent, 'warn');
+    const reason = error instanceof Error ? error.message : '';
+    places = imported ?? []; renderPlaces();
+    $('places-status').textContent = imported ? '' : '峠・山を取得できませんでした。' + reason;
+    poiUI.reset('補給・休憩を取得できませんでした。' + reason);
+    status.set('osm', 'OSM地物を取得できませんでした。' + reason, 'warn');
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
@@ -161,6 +172,7 @@ function render() {
   document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.value = history.value.name);
   samples = []; updateChart(); renderStats(); status.set('elevation', '');
   places = []; renderPlaces(); $('places-status').textContent = history.value.points.length < 2 ? 'ルートを描くと近くの峠・山を表示します。' : '峠・山を検索待ち…';
+  poiUI.reset(history.value.points.length < 2 ? 'ルートを描くと近くの補給・休憩地点を表示します。' : '補給・休憩を検索待ち…');
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;

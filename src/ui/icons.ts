@@ -17,6 +17,12 @@ export const icons = `<svg width="0" height="0" style="position:absolute" aria-h
     <symbol id="i-gravel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19c3-6 6-10 8-14M20 19c-3-6-6-10-8-14"/><circle cx="9" cy="16" r="1" fill="currentColor"/><circle cx="14" cy="13" r="1" fill="currentColor"/><circle cx="13" cy="18" r="1" fill="currentColor"/></symbol>
     <symbol id="i-road" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 20 10 4M17 20 14 4M12 8v2M12 14v3"/></symbol>
     <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="M8.4 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.6"/></symbol>
+<symbol id="p-conv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 5 4h14l2 6M5 10v10h14V10M3 10h18M10 20v-5h4v5"/></symbol>
+<symbol id="p-shop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.2 11h11l2-8H6"/><circle cx="9" cy="20" r="1.4" fill="currentColor"/><circle cx="17" cy="20" r="1.4" fill="currentColor"/></symbol>
+<symbol id="p-vend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"><path d="M10 2h4v3l2 3v14H8V8l2-3Z"/><path d="M8 13h8"/></symbol>
+<symbol id="p-water" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5C7.8 7.6 6 10.8 6 14a6 6 0 0 0 12 0c0-3.2-1.8-6.4-6-11.5Z"/></symbol>
+<symbol id="p-wc" viewBox="0 0 24 24" fill="currentColor"><text x="12" y="17" text-anchor="middle" font-size="12" font-weight="700" font-family="sans-serif">WC</text></symbol>
+<symbol id="p-michi" viewBox="0 0 24 24" fill="currentColor"><text x="12" y="18" text-anchor="middle" font-size="15" font-weight="700" font-family="sans-serif">駅</text></symbol>
   </defs>
 </svg>`;
 export const icon = (name: string) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;

@@ -47,6 +47,12 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(state().points).toHaveLength(2); expect(button('#export').disabled).toBe(true); await settle();
   expect(button('#export').disabled).toBe(false); expect(document.querySelector('.wp-marker.start')!.textContent).toBe('S'); expect(document.querySelector('.wp-marker.goal')!.textContent).toBe('G');
   expect(osmFetch).toHaveBeenCalledTimes(1);
+  expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
+  expect(document.getElementById('poi-list')!.textContent).toContain('コンビニ');
+  const convChip = document.querySelector<HTMLButtonElement>('#poi-chips button')!;
+  convChip.click(); expect(document.querySelectorAll('.poi-marker')).toHaveLength(0);
+  convChip.click(); expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
+  expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠'); expect(document.querySelector('#chart svg')).not.toBeNull();
   const mapElement = document.getElementById('map')!; mapElement.setPointerCapture = vi.fn(); mapElement.releasePointerCapture = vi.fn(); mapElement.hasPointerCapture = () => true;
   const start = captured.map!.latLngToContainerPoint([35.15435, 135.78305]);
@@ -78,6 +84,8 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   await vi.advanceTimersByTimeAsync(1700);
   expect(document.getElementById('status')!.classList.contains('warn')).toBe(true);
   expect(document.getElementById('status')!.textContent).toContain('Overpassが混雑中');
+  expect(document.getElementById('poi-status')!.textContent).toContain('Overpassが混雑中');
+  expect(document.getElementById('gap-note')!.hidden).toBe(true);
   expect(button('#export').disabled).toBe(true);
   await vi.advanceTimersByTimeAsync(29999);
   expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 1);
@@ -85,4 +93,12 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 2);
   expect(document.getElementById('status')!.textContent).not.toContain('Overpassが混雑中');
   expect(button('#export').disabled).toBe(false);
+  expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
+  osmFetch.mockResolvedValueOnce(new Response('', { status: 500 }));
+  captured.map!.fire('click', { latlng: { lat: 35.17, lng: 135.8 } }); await settle();
+  expect(document.getElementById('poi-status')!.textContent).toContain('取得できませんでした');
+  expect(document.getElementById('gap-note')!.hidden).toBe(true);
+  expect(document.querySelectorAll('.poi-marker')).toHaveLength(0);
+  button('#clear').click();
+  expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
 });
