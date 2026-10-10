@@ -8,6 +8,9 @@ import { Router, joinSegments } from './routing';
 import { History } from './state';
 import { routeLength } from './geo';
 import type { RouteState } from './types';
+import { DemProvider } from './dem';
+import { elevationStats, sampleRoute, type Sample } from './elevation';
+import { drawChart } from './chart';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header><h1>ルートビルダー</h1><p>自転車で、次の道へ</p></header>
@@ -19,6 +22,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main><div id="map" aria-label="ルート作成地図"></div><aside id="panel">
     <h2>ルートを描く</h2><p>地図をクリックして追加。経由点はドラッグで移動、クリックで削除できます。</p>
     <div id="notice" role="status" aria-live="polite"></div><p id="summary">0.00 km</p>
+    <p id="elevation-status" role="status"></p><div id="stats"></div><h2>標高プロファイル</h2><div id="chart"></div>
+    <small>標高: 地理院タイル / 登降は5mヒステリシスによる概算</small>
     <h2>経由点 <span id="point-count">0</span></h2><ol id="waypoints"></ol>
     <small>ルーティング: BRouter / ${OSM_ATTRIBUTION}</small>
   </aside></main>`;
@@ -27,6 +32,10 @@ const map = createMap('map');
 const markers = L.layerGroup().addTo(map);
 const line = L.polyline([], { color: '#0017c1', weight: 5 }).addTo(map);
 const router = new Router();
+const dem = new DemProvider();
+const cursor = L.circleMarker([0, 0], { radius: 7, color: '#b14c00', fillOpacity: 1 });
+let samples: Sample[] = [];
+function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }); }
 const history = new History({ name: '新しいルート', points: [], profile: 'mtb', followRoad: true });
 let revision = 0;
 function notify(message: string) { $('notice').textContent = message; }
@@ -45,9 +54,20 @@ const calculate = debounce(async (version: number) => {
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   line.setLatLngs(points.map(p => [p.lat, p.lng]));
   $('summary').textContent = `${(routeLength(points) / 1000).toFixed(2)} km`;
+  if (points.length < 2) { samples = []; $('stats').textContent = ''; $('elevation-status').textContent = ''; updateChart(); return; }
+  $('elevation-status').textContent = '標高を取得中…';
+  const next = await dem.sample(sampleRoute(points, CONFIG.elevation.intervalM), () => version === revision);
+  if (version !== revision) return;
+  samples = next;
+  const stats = elevationStats(samples.map(s => s.ele), CONFIG.elevation.hysteresisM);
+  const missing = samples.filter(s => s.ele === null).length;
+  $('elevation-status').textContent = missing ? `標高欠測 ${missing}/${samples.length} 点。統計は取得できた範囲のみです。` : '';
+  $('stats').textContent = `登り ${Math.round(stats.ascent)} m / 下り ${Math.round(stats.descent)} m / 最高点 ${stats.highest === null ? '—' : Math.round(stats.highest) + ' m'}`;
+  updateChart();
 }, CONFIG.routing.debounceMs);
 function render() {
   revision++;
+  samples = []; updateChart(); $('stats').textContent = ''; $('elevation-status').textContent = '';
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;

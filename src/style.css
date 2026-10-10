@@ -16,3 +16,7 @@ main { height: calc(100dvh - 136px); }
 .waypoint { border: 2px solid white; border-radius: 50%; background: #0017c1; color: white; text-align: center; line-height: 28px; font-weight: bold; }
 #waypoints { padding: 0; list-style: none; } #waypoints li { display: flex; gap: 8px; margin-bottom: 8px; }
 #notice { color: #664400; font-size: 14px; min-height: 24px; }
+#chart svg { width: 100%; height: auto; font-size: 11px; overflow: visible; }
+#chart input { width: 100%; accent-color: #0017c1; }
+.chart-readout { display: block; font-size: 13px; min-height: 40px; }
+#elevation-status { font-size: 14px; color: #664400; }
