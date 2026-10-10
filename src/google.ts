@@ -22,12 +22,15 @@ export function viewportParams(bounds: Bounds, zoom: number) {
   const b = viewportBounds(bounds);
   return new URLSearchParams({ zoom: String(Math.max(0, Math.min(22, Math.floor(zoom)))), north: String(b.north), south: String(b.south), east: String(b.east), west: String(b.west) });
 }
-// Conservative across all availability regions returned for this viewport:
-// do not request a native tile finer than the least-detailed region.
-export function nativeZoom(viewport: GoogleViewport): number {
-  const zooms = viewport.maxZoomRects?.map(r => r.maxZoom).filter(z => Number.isInteger(z) && z >= 0 && z <= 22);
-  if (!zooms?.length) throw new Error('Google viewport has no zoom availability');
-  return Math.min(...zooms);
+// Overlapping regions can advertise different detail levels; prefer the finest
+// available at the viewport center, falling back to all regions if none cover it.
+export function nativeZoom(viewport: GoogleViewport, center: { lat: number; lng: number }): number {
+  const rects = viewport.maxZoomRects?.filter(r => Number.isInteger(r.maxZoom) && r.maxZoom >= 0 && r.maxZoom <= 22);
+  if (!rects?.length) throw new Error('Google viewport has no zoom availability');
+  const lng = center.lng >= -180 && center.lng <= 180 ? center.lng : ((center.lng + 180) % 360 + 360) % 360 - 180;
+  const covering = rects.filter(r => center.lat >= r.south && center.lat <= r.north &&
+    (r.west <= r.east ? lng >= r.west && lng <= r.east : lng >= r.west || lng <= r.east));
+  return Math.max(...(covering.length ? covering : rects).map(r => r.maxZoom));
 }
 export function keyFingerprint(key: string) {
   let hash = 2166136261; for (const char of key) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }

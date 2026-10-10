@@ -52,7 +52,7 @@ export class GoogleLayer extends L.Layer {
       if (!response.ok) throw new Error(`Google viewport HTTP ${response.status}`);
       const viewport = await response.json() as GoogleViewport;
       if (!viewport.copyright || typeof viewport.copyright !== 'string') throw new Error('Missing attribution');
-      const maxNativeZoom = nativeZoom(viewport);
+      const maxNativeZoom = nativeZoom(viewport, map.getCenter());
       if (version !== this.generation || !this.activeMap) return;
       if (this.copyright) map.attributionControl.removeAttribution(this.copyright);
       this.copyright = `背景地図: ${escapeHtml(viewport.copyright)}`;
@@ -65,7 +65,7 @@ export class GoogleLayer extends L.Layer {
         this.tiles.on('tileerror', () => { if (this.activeMap) this.notify('Googleタイルを取得できません。キーの制限・利用枠をご確認ください。'); });
         this.tiles.addTo(map); this.token = session.session;
       } else this.tiles.setOpacity(1);
-      this.notify('Google背景地図を表示中。ルート・地物・標高はBRouter / OSM / 地理院です。');
+      this.notify('Google背景を表示中');
       clearTimeout(this.timer);
       this.timer = setTimeout(() => { void this.refresh(); }, Math.max(1000, Math.min(86400000, Number(session.expiry) * 1000 - Date.now() - 3600000)));
     } catch (error) {

@@ -89,7 +89,7 @@ Viteの `VITE_` 変数はブラウザ配信コードに含まれます。サー�
 
 設定は `src/google.ts` の `GOOGLE` に集約。既定は `scaleFactor2x` / `highDpi:true`。1xにする場合は `scaleFactor1x` / `highDpi:false` に変更。APIが512px画像を返しても地理的範囲は同じなので、LeafletのCSSタイルサイズは256pxです。
 
-セッションのみ、キーの識別値・地図種別・DPI設定別にlocalStorageへ保存。expiry（Unix秒）の1時間前に更新します。移動・ズーム後400ms待機してviewportを取得し、copyrightを反映します。失敗時は帰属が不明なGoogle背景を表示せず地理院淡色へ戻します。`maxZoomRects` が複数ある場合は最小上限を採用する保守的実装です。詳細度が混在する広域表示では拡大画像が粗くなる場合があります。
+セッションのみ、キーの識別値・地図種別・DPI設定別にlocalStorageへ保存。expiry（Unix秒）の1時間前に更新します。移動・ズーム後400ms待機してviewportを取得し、copyrightを反映します。失敗時は帰属が不明なGoogle背景を表示せず地理院淡色へ戻します。`maxZoomRects` が複数ある場合は、表示範囲の中心点を含む矩形の最大上限を採用します。中心点を含む矩形がなければ全矩形の最大上限を使います。
 
 タイルのプリフェッチ・独自の永続キャッシュ・オフライン保存はありません。`keepBuffer:0`、`updateWhenIdle:true`、`updateWhenZooming:false`、`detectRetina:false`。画像キャッシュはブラウザのHTTPキャッシュに従います。
 
