@@ -13,7 +13,7 @@ function testRouter(fetcher?: typeof fetch) {
 }
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
-const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], followRoad: true });
+const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legFollow: [true, false, true], followRoad: true });
 it('inherits profiles on append, insertion, deletion and movement, including endpoints', () => {
   const state = mixedState();
   expect(insertWaypoint(state, 4, points[4]).legProfiles).toEqual(['mtb', 'road', 'gravel', 'gravel']);
@@ -24,7 +24,7 @@ it('inherits profiles on append, insertion, deletion and movement, including end
   expect(removeWaypoint(state, 3).legProfiles).toEqual(['mtb', 'road']);
   const moved = { ...state, points: state.points.map((p, i) => i === 2 ? points[4] : p) };
   expect(moved.legProfiles).toEqual(state.legProfiles);
-  const empty = { ...state, points: [], legProfiles: [] };
+  const empty = { ...state, points: [], legProfiles: [], legFollow: [] };
   const first = insertWaypoint(empty, 0, points[0]);
   expect(first.legProfiles).toEqual([]);
   const second = insertWaypoint(first, 1, points[1]);
@@ -37,6 +37,7 @@ it.each([1, undefined])('undo restores a single reprofile operation (%s)', index
   const state = mixedState(), history = new History(state);
   history.set(reprofile(history.value, index));
   expect(history.value.legProfiles).toEqual(index === undefined ? ['gravel', 'gravel', 'gravel'] : ['mtb', 'gravel', 'gravel']);
+  expect(history.value.legFollow).toEqual([true, true, true]);
   history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
 });
 it('requests only legs whose coordinates or profile change, and reuses cache after Undo', async () => {
@@ -150,7 +151,7 @@ it('uses custom IDs over the wire and logical keys in profileUsed, sharing regis
   expect(fetcher.mock.calls.filter(([, init]) => !init?.method).map(([url]) => new URL(String(url)).searchParams.get('profile'))).toEqual(Array(4).fill('custom_1'));
   expect(segments.every(s => s.profileUsed === 'road-jp')).toBe(true);
   expect(routingWarnings(segments, 'road')).toEqual([]);
-  expect(segmentKey(points[0], points[1], 'road')).toBe('road:135.000000,35.000000|135.000000,35.010000');
+  expect(segmentKey(points[0], points[1], 'road')).toBe('road:true:135.000000,35.000000|135.000000,35.010000');
 });
 it('re-registers once after HTTP 500 and caches the successful retry', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(registration(1)).mockResolvedValueOnce(new Response('', { status: 500 }))
@@ -210,4 +211,45 @@ it('shares one replacement registration for concurrent expired-ID failures', asy
   const results = await new Router(fetcher).route(points.slice(0, 3), 'road');
   expect(registrations).toBe(2);
   expect(results.every(s => s.profileUsed === 'road-jp' && !s.fallback)).toBe(true);
+});
+
+it('inherits follow settings on append, split, move and removal without mutating the source', () => {
+  const state = { ...mixedState(), followRoad: false };
+  expect(insertWaypoint(state, 4, points[4]).legFollow).toEqual([true, false, true, false]);
+  expect(insertWaypoint(state, 2, points[4]).legFollow).toEqual([true, false, false, true]);
+  expect(insertWaypoint(state, 1, points[4]).legFollow).toEqual([true, true, false, true]);
+  expect(insertWaypoint(state, 0, points[4]).legFollow).toEqual([true, true, false, true]);
+  expect(removeWaypoint(state, 1).legFollow).toEqual([true, true]);
+  expect(removeWaypoint(state, 2).legFollow).toEqual([true, false]);
+  expect(removeWaypoint(state, 0).legFollow).toEqual([false, true]);
+  expect(removeWaypoint(state, 3).legFollow).toEqual([true, false]);
+  const history = new History(state);
+  history.set({ ...state, points: state.points.map((p, i) => i === 1 ? points[4] : p) });
+  expect(history.value.legFollow).toEqual([true, false, true]); history.undo(); expect(history.value).toEqual(state);
+  const first = insertWaypoint({ ...state, points: [], legProfiles: [], legFollow: [] }, 0, points[0]);
+  expect(first.legFollow).toEqual([]);
+  expect(insertWaypoint(first, 1, points[1]).legFollow).toEqual([false]);
+  expect(removeWaypoint(first, 0).legFollow).toEqual([]);
+  expect(state.legFollow).toEqual([true, false, true]);
+});
+it.each([0, undefined])('redraws both settings and restores both with one undo (%s)', index => {
+  const state = { ...mixedState(), followRoad: false }, history = new History(state);
+  history.set(reprofile(state, index));
+  expect(history.value.legFollow).toEqual(index === 0 ? [false, false, true] : [false, false, false]);
+  expect(history.value.legProfiles).toEqual(index === 0 ? ['gravel', 'road', 'gravel'] : ['gravel', 'gravel', 'gravel']);
+  history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
+});
+it('never requests straight legs, including when a road result is cached, and keeps mixed results ordered', async () => {
+  const fetcher = vi.fn(async () => response()), router = testRouter(fetcher), state = mixedState();
+  const run = (follow: boolean[]) => router.route(state.points, state.legProfiles, undefined, undefined, follow);
+  const straight = await run([false, false, false]); expect(fetcher).not.toHaveBeenCalled();
+  expect(straight.map(s => s.points)).toEqual(state.points.slice(1).map((p, i) => [state.points[i], p]));
+  const mixed = await run(state.legFollow); expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(mixed[1]).toEqual({ points: [points[1], points[2]], fallback: false });
+  expect(routingWarnings(mixed, state.legProfiles)).toEqual([]);
+  expect(await run([false, false, false])).toEqual(straight); expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(router.cached(points[0], points[1], 'mtb', false)).toBeUndefined();
+  expect(router.cached(points[0], points[1], 'mtb', true)).toBeDefined();
+  expect(segmentKey(points[0], points[1], 'mtb', false)).not.toBe(segmentKey(points[0], points[1], 'mtb', true));
+  await expect(run([])).rejects.toThrow();
 });

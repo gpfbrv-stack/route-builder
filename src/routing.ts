@@ -4,20 +4,20 @@ import { distance, validPoint } from './geo';
 import type { Point, Segment } from './types';
 import { ProfileRegistry } from './brouter-profiles';
 
-export function segmentKey(a: Point, b: Point, profile: Profile) {
-  return `${profile}:${a.lng.toFixed(6)},${a.lat.toFixed(6)}|${b.lng.toFixed(6)},${b.lat.toFixed(6)}`;
+export function segmentKey(a: Point, b: Point, profile: Profile, followRoad = true) {
+  return `${profile}:${followRoad}:${a.lng.toFixed(6)},${a.lat.toFixed(6)}|${b.lng.toFixed(6)},${b.lat.toFixed(6)}`;
 }
 export class Router {
   private cache = new Map<string, Segment>();
   private pending = new Map<string, Promise<Segment>>();
   private queue = new RequestQueue(CONFIG.routing.concurrency);
   constructor(private request: typeof fetch = (...args) => fetch(...args), private registry = new ProfileRegistry(request)) {}
-  cached(a: Point, b: Point, profile: Profile): Segment | undefined {
-    return this.cache.get(segmentKey(a, b, profile));
+  cached(a: Point, b: Point, profile: Profile, followRoad = true): Segment | undefined {
+    return this.cache.get(segmentKey(a, b, profile, followRoad));
   }
-  segment(a: Point, b: Point, profile: Profile): Promise<Segment> {
-    if (distance(a, b) < 0.1) return Promise.resolve({ points: [a, b], fallback: false });
-    const key = segmentKey(a, b, profile);
+  segment(a: Point, b: Point, profile: Profile, followRoad = true): Promise<Segment> {
+    if (!followRoad || distance(a, b) < 0.1) return Promise.resolve({ points: [a, b], fallback: false });
+    const key = segmentKey(a, b, profile, followRoad);
     const cached = this.cache.get(key);
     if (cached) return Promise.resolve(cached);
     const pending = this.pending.get(key);
@@ -60,14 +60,15 @@ export class Router {
     const params = new URLSearchParams({ lonlats: `${a.lng},${a.lat}|${b.lng},${b.lat}`, profile, alternativeidx: '0', format: 'geojson' });
     return this.request(`https://brouter.de/brouter?${params}`, { signal: AbortSignal.timeout(CONFIG.routing.timeoutMs) });
   }
-  async route(points: Point[], profiles: Profile | Profile[], current = () => true, resolved?: (index: number, segment: Segment) => void): Promise<Segment[]> {
+  async route(points: Point[], profiles: Profile | Profile[], current = () => true, resolved?: (index: number, segment: Segment) => void, follow: boolean[] = points.slice(1).map(() => true)): Promise<Segment[]> {
     if (Array.isArray(profiles) && profiles.length !== Math.max(0, points.length - 1)) throw new Error('区間の走り方の数が不正です');
+    if (follow.length !== Math.max(0, points.length - 1)) throw new Error('区間の道に沿う設定が不正です');
     const results: Segment[] = [];
     let next = 0;
     await Promise.all(Array.from({ length: CONFIG.routing.concurrency }, async () => {
       while (current() && next < points.length - 1) {
         const i = next++;
-        results[i] = await this.segment(points[i], points[i + 1], typeof profiles === 'string' ? profiles : profiles[i]);
+        results[i] = await this.segment(points[i], points[i + 1], typeof profiles === 'string' ? profiles : profiles[i], follow[i]);
         if (current()) resolved?.(i, results[i]);
       }
     }));

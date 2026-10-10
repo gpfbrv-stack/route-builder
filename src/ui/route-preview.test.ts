@@ -7,7 +7,7 @@ import { insertWaypoint } from '../state';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
-const state = (delta = 0): RouteState => ({ name: 'live', profile: 'mtb', followRoad: true, legProfiles: ['road', 'gravel', 'mtb'],
+const state = (delta = 0): RouteState => ({ name: 'live', profile: 'mtb', followRoad: true, legProfiles: ['road', 'gravel', 'mtb'], legFollow: [true, true, true],
   points: [{ lat: 35, lng: 135 }, { lat: 35.01 + delta, lng: 135.01 }, { lat: 35.02, lng: 135.02 }, { lat: 35.03, lng: 135.03 }] });
 function setup() {
   const jobs: { current: () => boolean; resolved: (i: number, s: Segment) => void; finish: () => void }[] = [];
@@ -57,7 +57,7 @@ it('uses inherited profiles for insertion, handles endpoints and makes no reques
   live.update(state(), 3); await vi.advanceTimersByTimeAsync(400);
   expect(route.mock.calls[2].slice(0, 2)).toEqual([state().points.slice(2), ['mtb']]);
   jobs[2].finish(); live.cancel();
-  live.update({ ...state(), followRoad: false }, 1); await vi.advanceTimersByTimeAsync(1000);
+  live.update({ ...state(), legFollow: [false, false, false] }, 1); await vi.advanceTimersByTimeAsync(1000);
   expect(route).toHaveBeenCalledTimes(3); live.cancel();
 });
 it('shares the real router concurrency limit with normal calculations and caches live results', async () => {
@@ -78,4 +78,12 @@ it('shares the real router concurrency limit with normal calculations and caches
   const drop = router.route(moved.points, moved.legProfiles);
   await vi.advanceTimersByTimeAsync(1000); await drop;
   expect(fetcher).toHaveBeenCalledTimes(5); live.cancel();
+});
+
+it('routes mixed neighbours with their own follow settings even when the default is off', async () => {
+  const { live, route, jobs } = setup();
+  live.update({ ...state(), followRoad: false, legFollow: [false, true, false] }, 1);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(route).toHaveBeenCalledOnce(); expect(route.mock.calls[0][4]).toEqual([false, true]);
+  jobs[0].finish(); live.cancel();
 });

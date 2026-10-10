@@ -26,7 +26,7 @@ export function decimateTrack(track: Point[]): Point[] {
   result.push(track.at(-1)!);
   return result.map(p => ({ lat: p.lat, lng: p.lng }));
 }
-export function parseGPX(xml: string, profile: Profile = 'mtb'): { state: RouteState; track: Point[]; places: Place[] } {
+export function parseGPX(xml: string, profile: Profile = 'mtb', followRoad = true): { state: RouteState; track: Point[]; places: Place[] } {
   if (xml.length > 20_000_000 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('GPXが大きすぎるか、未対応のXML形式です');
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length || doc.documentElement.localName !== 'gpx') throw new Error('GPXを解析できません');
@@ -43,10 +43,12 @@ export function parseGPX(xml: string, profile: Profile = 'mtb'): { state: RouteS
   const track = (segments[0] ?? all(doc, 'rtept')).map(point);
   if (track.length < 2 || track.length > 100000) throw new Error('GPXは2〜100,000点のトラックが必要です');
   const name = all(doc, 'trk').map(n => text(n, 'name')).find(Boolean) || all(doc, 'metadata').map(n => text(n, 'name')).find(Boolean) || '読み込んだルート';
-  let state = validateState({ name: name.slice(0, 200), points: decimateTrack(track), profile, followRoad: true, importedTrack: track });
+  let state = validateState({ name: name.slice(0, 200), points: decimateTrack(track), profile, followRoad, importedTrack: track });
   const editing = doc.getElementsByTagNameNS(NS, 'editing')[0]?.textContent;
   if (editing) { try { state = { ...validateState(JSON.parse(editing)), importedTrack: track }; } catch { /* foreign or damaged extension: keep track */ } }
   state.profile = profile;
+  state.followRoad = followRoad;
+  state.legFollow = Array(Math.max(0, state.points.length - 1)).fill(followRoad);
   state.legProfiles = Array(Math.max(0, state.points.length - 1)).fill(profile);
   const poiTypes = new Set<string>(Object.values(CONFIG.poi.categories).map(category => category.label));
   const places: Place[] = all(doc, 'wpt').filter(n => !poiTypes.has(text(n, 'type'))).map((n, i) => {

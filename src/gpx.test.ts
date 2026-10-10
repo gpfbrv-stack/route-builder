@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { generateGPX, parseGPX, decimateTrack, gpxFilename } from './gpx';
 import type { Place, Poi, RouteState } from './types';
 import { CONFIG } from './config';
-const state: RouteState = { name: '京都 & <峠> "旅"', points: [{ lat: 35, lng: 135 }, { lat: 35.01, lng: 135.01 }], profile: 'gravel', legProfiles: ['gravel'], followRoad: true };
+const state: RouteState = { name: '京都 & <峠> "旅"', points: [{ lat: 35, lng: 135 }, { lat: 35.01, lng: 135.01 }], profile: 'gravel', legProfiles: ['gravel'], legFollow: [true], followRoad: true };
 it('assigns the current profile to all imported legs while retaining geometry and anchors', () => {
   const xml = generateGPX(state, state.points);
   for (const profile of ['mtb', 'road', 'gravel'] as const) {
@@ -57,4 +57,13 @@ it('writes all six POI types and symbols and excludes them from passes on repeat
 it('excludes namespaced foreign POI waypoints by type while retaining ordinary waypoints', () => {
   const xml = '<g:gpx xmlns:g="http://www.topografix.com/GPX/1/1"><g:trk><g:trkseg><g:trkpt lat="35" lon="135"/><g:trkpt lat="35.01" lon="135"/></g:trkseg></g:trk><g:wpt lat="35" lon="135"><g:type> 水場 </g:type></g:wpt><g:wpt lat="35" lon="135"><g:name>峠</g:name></g:wpt></g:gpx>';
   expect(parseGPX(xml).places.map(p => p.name)).toEqual(['峠']);
+});
+
+it.each([true, false])('assigns current followRoad=%s to imported legs with or without editing extensions', followRoad => {
+  for (const xml of [generateGPX({ ...state, followRoad: !followRoad }, state.points), '<gpx><rte><rtept lat="35" lon="135"/><rtept lat="35.01" lon="135"/></rte></gpx>']) {
+    const result = parseGPX(xml, 'road', followRoad);
+    expect(result.state.followRoad).toBe(followRoad);
+    expect(result.state.legFollow).toEqual([followRoad]);
+    expect(result.state.importedTrack).toEqual(result.track);
+  }
 });

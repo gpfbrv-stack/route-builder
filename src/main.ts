@@ -108,7 +108,7 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], followRoad: true });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legFollow: [], followRoad: true });
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function change(next: RouteState, keepTrack = false) {
@@ -122,11 +122,11 @@ const calculate = debounce(async (version: number) => {
   let points = state.importedTrack ?? state.points;
   let shapes = state.points.slice(1).map((point, i) => [state.points[i], point]);
   if (state.importedTrack) notify('GPXの形状を保持中。経由点の編集・区間の引き直しでルートを再計算します。');
-  else if (state.followRoad && points.length > 1) {
+  else if (state.legFollow.some(Boolean) && points.length > 1) {
     notify('道に沿ったルートを計算中…', 'busy');
     const segments = await router.route(points, state.legProfiles, () => version === revision, (index, segment) => {
       routeLine.resolveState(state, index, segment);
-    });
+    }, state.legFollow);
     if (version !== revision) return;
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
@@ -209,8 +209,8 @@ function render() {
     const popup = document.createElement('div'); popup.className = 'waypoint-popup'; popup.append(button);
     if (i < state.legProfiles.length) {
       const description = document.createElement('span');
-      description.textContent = `次の経由点まで: ${CONFIG.profiles[state.legProfiles[i]].label}`;
-      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の走り方で引き直す';
+      description.textContent = `次の経由点まで: ${state.legFollow[i] ? CONFIG.profiles[state.legProfiles[i]].label : '直線'}`;
+      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の設定で引き直す';
       redraw.onclick = () => { change(reprofile(history.value, i)); map.closePopup(); };
       popup.append(description, redraw);
     }
@@ -221,7 +221,7 @@ function render() {
     focus.innerHTML = `<span class="name">${i === 0 ? 'スタート' : i === state.points.length - 1 ? 'ゴール' : '経由点'}</span><span class="sub num">—</span>`;
     if (i < state.legProfiles.length) {
       const profile = document.createElement('span'); profile.className = 'sub leg-profile';
-      profile.textContent = `次の経由点まで: ${CONFIG.profiles[state.legProfiles[i]].label}`;
+      profile.textContent = `次の経由点まで: ${state.legFollow[i] ? CONFIG.profiles[state.legProfiles[i]].label : '直線'}`;
       focus.append(profile);
     }
     focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
@@ -230,7 +230,7 @@ function render() {
     const toggle = document.createElement('summary'); toggle.textContent = '…'; toggle.setAttribute('aria-label', `経由点 ${i + 1} のメニュー`);
     const actions = document.createElement('div'); actions.className = 'waypoint-actions';
     if (i < state.legProfiles.length) {
-      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の走り方で引き直す';
+      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の設定で引き直す';
       redraw.onclick = () => change(reprofile(history.value, i)); actions.append(redraw);
     }
     actions.append(del); menu.append(toggle, actions);
@@ -255,9 +255,15 @@ $('profile').onchange = () => {
   notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
 };
 $('reprofile-all').onclick = () => { if (history.value.legProfiles.length) change(reprofile(history.value)); };
-$('follow').onchange = () => change({ ...history.value, followRoad: $<HTMLInputElement>('follow').checked });
+$('follow').onchange = () => {
+  const followRoad = $<HTMLInputElement>('follow').checked;
+  history.value = { ...history.value, followRoad };
+  document.querySelectorAll<HTMLInputElement>('[data-follow]').forEach(input => input.checked = followRoad);
+  status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
+  notify(followRoad ? 'これから引く区間を道に沿って計算します' : 'これから引く区間を直線で引きます');
+};
 $('undo').onclick = () => { history.undo(); render(); };
-$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [] });
+$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [], legFollow: [] });
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
   history.value.name = input.value.trim() || '新しいルート';
@@ -269,7 +275,7 @@ $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
     if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
-    const imported = parseGPX(await file.text(), history.value.profile); change(imported.state, true);
+    const imported = parseGPX(await file.text(), history.value.profile, history.value.followRoad); change(imported.state, true);
     $('fit').click();
   } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';

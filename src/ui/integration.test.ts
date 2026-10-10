@@ -120,7 +120,17 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
     button(selector).click(); expect(state().legProfiles).toEqual(['road']);
     button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
   }
+  const followCalls = captured.routeCalls, followPath = document.querySelector('.route-line'), drawSpy = vi.spyOn(leaflet.Polyline.prototype, 'setLatLngs');
   button('#menu-pop [data-follow]').click(); expect(state().followRoad).toBe(false); expect((document.getElementById('follow') as HTMLInputElement).checked).toBe(false); await settle();
+  expect(captured.routeCalls).toBe(followCalls); expect(drawSpy).not.toHaveBeenCalled(); drawSpy.mockRestore();
+  expect(document.querySelector('.route-line')).toBe(followPath); expectExportsDisabled(false);
+  expect(state().legFollow).toEqual([true]);
+  expect(document.getElementById('status')!.textContent).toContain('これから引く区間を直線で引きます');
+  for (const selector of ['[data-waypoint="0"] .waypoint-actions button:first-child', '#menu-pop [data-action="reprofile-all"]', '#reprofile-all']) {
+    button(selector).click(); expect(state().legFollow).toEqual([false]); expect(state().legProfiles).toEqual(['road']);
+    expect(document.querySelector('.leg-profile')!.textContent).toContain('直線');
+    button('#undo').click(); expect(state().legFollow).toEqual([true]); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  }
   const point = document.querySelector<HTMLButtonElement>('[data-waypoint="1"] .del')!; point.click(); expect(state().points).toHaveLength(1); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   button('#share').click(); await settle(); expect(copy).toHaveBeenCalledOnce(); expect((document.getElementById('share-url') as HTMLInputElement).hidden).toBe(true);
   copy.mockRejectedValueOnce(new Error('denied')); button('#share').click(); await settle(); const share = document.getElementById('share-url') as HTMLInputElement; expect(share.hidden).toBe(false); expect(share.selectionEnd).toBe(share.value.length);
@@ -191,7 +201,9 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(state().importedTrack).toHaveLength(2); expect(state().name).toBe('GPX確認'); expect(button('#export').disabled).toBe(false);
   expect(state().legProfiles).toEqual(['road']);
   const importedShape = document.querySelector('.route-line')!.getAttribute('d'), importedCalls = captured.routeCalls;
-  button('.m-top [data-profile="gravel"]').click(); await settle();
+  button('.m-top [data-profile="gravel"]').click();
+  button('#follow').click(); await settle();
+  expect(state().legFollow).toEqual([true]);
   expect(state().importedTrack).toEqual(imported.points); expect(state().legProfiles).toEqual(['road']);
   expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(importedShape);
   expect(captured.routeCalls).toBe(importedCalls); expectExportsDisabled(false);

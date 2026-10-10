@@ -3,21 +3,25 @@ import type { Point, RouteState } from './types';
 
 /** Insertion inside a leg splits its profile; appending uses the current selection. */
 export function insertWaypoint(state: RouteState, index: number, point: Point): RouteState {
-  const points = [...state.points], legProfiles = [...state.legProfiles];
+  const points = [...state.points], legProfiles = [...state.legProfiles], legFollow = [...state.legFollow];
   points.splice(index, 0, point);
+  if (state.points.length) legFollow.splice(Math.max(0, index - 1), 0,
+    index === state.points.length ? state.followRoad : state.legFollow[Math.max(0, index - 1)] ?? state.followRoad);
   if (state.points.length) legProfiles.splice(Math.max(0, index - 1), 0,
     index === state.points.length ? state.profile : state.legProfiles[Math.max(0, index - 1)] ?? state.profile);
-  return { ...state, points, legProfiles };
+  return { ...state, points, legProfiles, legFollow };
 }
 export function removeWaypoint(state: RouteState, index: number): RouteState {
-  const points = state.points.filter((_, i) => i !== index), legProfiles = [...state.legProfiles];
+  const points = state.points.filter((_, i) => i !== index), legProfiles = [...state.legProfiles], legFollow = [...state.legFollow];
   // Removing an interior point retains the incoming leg's profile.
   legProfiles.splice(Math.min(index, legProfiles.length - 1), 1);
-  return { ...state, points, legProfiles };
+  legFollow.splice(Math.min(index, legFollow.length - 1), 1);
+  return { ...state, points, legProfiles, legFollow };
 }
 export function selectProfile(state: RouteState, profile: Profile): RouteState { return { ...state, profile }; }
 export function reprofile(state: RouteState, index?: number): RouteState {
-  return { ...state, legProfiles: state.legProfiles.map((profile, i) => index === undefined || i === index ? state.profile : profile) };
+  return { ...state, legProfiles: state.legProfiles.map((profile, i) => index === undefined || i === index ? state.profile : profile),
+    legFollow: state.legFollow.map((follow, i) => index === undefined || i === index ? state.followRoad : follow) };
 }
 export class History {
   private past: RouteState[] = [];
