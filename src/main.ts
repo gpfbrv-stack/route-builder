@@ -1,12 +1,15 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import '@fontsource/noto-sans-jp/400.css';
+import '@fontsource/noto-sans-jp/500.css';
+import '@fontsource/noto-sans-jp/700.css';
 import './style.css';
 import { createMap } from './map';
-import { CONFIG, OSM_ATTRIBUTION, type Profile } from './config';
+import { CONFIG, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments } from './routing';
 import { History } from './state';
-import { routeLength } from './geo';
+import { routeLength, nearestOnRoute, distance } from './geo';
 import type { RouteState, Point, Place } from './types';
 import { PlaceProvider } from './places';
 import { DemProvider } from './dem';
@@ -17,54 +20,47 @@ import { encodeRoute, consumeSharedRoute, loadRoute, saveRoute } from './persist
 import { cumulativeDistances } from './geo';
 import { installPanel } from './panel';
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <header><div class="brand-symbol" aria-hidden="true">↗</div><div><h1>ルートビルダー</h1><p>自転車で、次の道へ</p></div><span class="phase-tag">CYCLE ROUTE</span></header>
-  <div id="toolbar">
-    <label>走り方 <select id="profile">${Object.entries(CONFIG.profiles).map(([key, value]) => `<option value="${key}">${value.label}</option>`).join('')}</select></label>
-    <label><input type="checkbox" id="follow" checked> 道に沿う</label>
-    <button id="undo">元に戻す</button><button id="clear">全消去</button><button id="fit">全体表示</button>
-    <button id="import">GPX読込</button><input id="file" type="file" accept=".gpx,application/gpx+xml" hidden>
-    <button id="export" disabled>GPX保存</button><button id="share">共有URL</button>
-  </div>
-  <main><div id="map" aria-label="ルート作成地図"></div><aside id="panel" aria-label="ルート情報">
-    <button id="panel-toggle" aria-controls="panel-content" aria-expanded="false"><span class="grip"></span><span>ルート情報</span><strong id="peek-summary">0.00 km</strong></button><div id="panel-content">
-    <h2 class="panel-title">ルートを描く</h2><p class="hint">地図をタップして追加。経由点はドラッグで移動、選択して削除できます。</p>
-    <label>ルート名 <input id="route-name" maxlength="200" value="新しいルート"></label>
-    <p id="storage-status" role="status"></p><p id="map-status" role="status"></p><input id="share-url" aria-label="共有URL" readonly hidden>
-    <div id="notice" role="status" aria-live="polite"></div><p class="distance-label">ルート距離</p><p id="summary">0.00 km</p>
-    <p id="elevation-status" role="status"></p><div id="stats"></div><h2>標高プロファイル</h2><div id="chart"></div>
-    <small>標高: 地理院タイル / 登降は5mヒステリシスによる概算</small>
-    <h2>通過する峠・山</h2><p id="places-status" role="status"></p><ul id="places"></ul>
-    <h2>経由点 <span id="point-count">0</span></h2><ol id="waypoints"></ol>
-    <p class="hint">経路は通行可能性を保証しません。現地の規制・通行状況をご確認ください。</p>
-    <small>ルート・地物: BRouter / ${OSM_ATTRIBUTION}</small>
-  </div></aside></main>`;
+import { mountUI } from './ui/layout';
+import { StatusMessages, type StatusKind } from './ui/status';
+import { installPopover } from './ui/popover';
+import { icon } from './ui/icons';
+import { installRouteDrag } from './ui/route-drag';
+mountUI();
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const map = createMap('map', message => { $('map-status').textContent = message; });
-installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
+const status = new StatusMessages($('status'));
+const map = createMap('map', message => status.set('map', message, message.includes('できません') ? 'warn' : message.includes('中…') ? 'busy' : 'info'));
+const closeMenu = installPopover($<HTMLButtonElement>('menu-btn'), $('menu-pop'));
+document.querySelectorAll('#menu-pop [data-action]').forEach(button => button.addEventListener('click', () => closeMenu()));
+const sheet = installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
 new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 const markers = L.layerGroup().addTo(map);
-const line = L.polyline([], { color: '#0017c1', weight: 5 }).addTo(map);
+const casing = L.polyline([], { color: '#ffffff', weight: 11, interactive: false }).addTo(map);
+const line = L.polyline([], { color: '#0017c1', weight: 6, className: 'route-line' }).addTo(map);
+const setLine = (points: Point[]) => { const ll: L.LatLngExpression[] = points.map(p => [p.lat, p.lng]); casing.setLatLngs(ll); line.setLatLngs(ll); };
 const router = new Router();
 const dem = new DemProvider();
 const placeProvider = new PlaceProvider();
 const placeMarkers = L.layerGroup().addTo(map);
 let places: Place[] = [];
-const cursor = L.circleMarker([0, 0], { radius: 7, color: '#b14c00', fillOpacity: 1 });
+const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
 let samples: Sample[] = [];
 let resolvedTrack: Point[] = [];
+let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
-function syncExport() { $<HTMLButtonElement>('export').disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2; }
+function syncExport() { document.querySelectorAll<HTMLButtonElement>('[data-action="export"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2); }
 function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
   places.forEach(place => {
-    const elevation = place.ele == null ? '標高不明' : `${Math.round(place.ele)} m`;
-    const label = document.createElement('span'); label.textContent = `${place.name} · ${elevation}`;
-    const marker = L.circleMarker([place.lat, place.lng], { radius: 5, color: '#115a36', fillOpacity: 1 }).addTo(placeMarkers).bindTooltip(label, { permanent: true, direction: 'top' });
-    const item = document.createElement('li'), button = document.createElement('button');
-    button.textContent = `${(place.routeDistance / 1000).toFixed(2)} km · ${place.name} · ${elevation}`;
-    button.title = `ルートから約${Math.round(place.offset)}m / 標高出典: ${place.elevationSource}`;
+    const elevation = place.ele == null ? '—' : Math.round(place.ele).toLocaleString('ja-JP');
+    const label = document.createElement('div'); label.className = 'pass-label';
+    const value = document.createElement('b'); value.className = 'num'; value.textContent = `${elevation}m`;
+    label.append('▲ ', place.name, value);
+    const marker = L.marker([place.lat, place.lng], { interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: label }) }).addTo(placeMarkers);
+    const item = document.createElement('li'), button = document.createElement('button'); button.className = 'row place-row';
+    button.innerHTML = `<span class="pass-ico">▲</span><span class="row-copy"><span class="name"></span><span class="sub num">${(place.routeDistance / 1000).toFixed(1)} km地点 · ルートから${Math.round(place.offset)}m</span></span><span class="val num">${elevation} m</span>`;
+    button.querySelector('.name')!.textContent = place.name;
+    button.title = `標高出典: ${place.elevationSource}`;
     button.onclick = () => map.panTo(marker.getLatLng()); item.append(button); $('places').append(item);
   });
   updateChart();
@@ -80,7 +76,7 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
     }
     if (version !== revision) return;
     places = found; renderPlaces();
-    $('places-status').textContent = found.length ? `${found.length}件（OSM登録地物、近接判定）` : 'ルート近傍に登録された峠・山は見つかりませんでした。';
+    $('places-status').textContent = found.length ? '' : 'ルート近傍に登録された峠・山は見つかりませんでした。';
   } catch (error) {
     if (version !== revision) return;
     places = []; renderPlaces(); $('places-status').textContent = `峠・山を取得できませんでした。${error instanceof Error ? error.message : ''}`;
@@ -89,9 +85,9 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
 }, CONFIG.places.debounceMs);
 const history = new History({ name: '新しいルート', points: [], profile: 'mtb', followRoad: true });
 let revision = 0;
-function notify(message: string) { $('notice').textContent = message; }
+function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function change(next: RouteState, keepTrack = false) {
-  if (next.points.length > 200) { notify('経由点は200点までです。'); return; }
+  if (next.points.length > 200) { notify('経由点は200点までです。', 'warn'); return; }
   history.set(keepTrack ? next : { ...next, importedTrack: undefined, importedPlaces: undefined }); render();
 }
 function remove(index: number) { change({ ...history.value, points: history.value.points.filter((_, i) => i !== index) }); }
@@ -99,20 +95,22 @@ const calculate = debounce(async (version: number) => {
   if (version !== revision) return;
   const state = structuredClone(history.value);
   let points = state.importedTrack ?? state.points;
+  let shapes = state.points.slice(1).map((point, i) => [state.points[i], point]);
   if (state.importedTrack) notify('GPXの形状を保持中。経由点・走り方を編集するとルートを再計算します。');
   else if (state.followRoad && points.length > 1) {
-    notify('道に沿ったルートを計算中…');
+    notify('道に沿ったルートを計算中…', 'busy');
     const segments = await router.route(points, state.profile, () => version === revision);
     if (version !== revision) return;
     points = joinSegments(segments);
-    notify(segments.some(s => s.fallback) ? '一部区間を取得できませんでした。該当区間は直線で表示しています。' : 'ルートを更新しました。');
+    shapes = segments.map(segment => segment.points);
+    notify(segments.some(s => s.fallback) ? '一部区間を取得できませんでした。該当区間は直線で表示しています。' : 'ルートを更新しました。', segments.some(s => s.fallback) ? 'warn' : 'info');
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
-  line.setLatLngs(points.map(p => [p.lat, p.lng]));
-  $('summary').textContent = `${(routeLength(points) / 1000).toFixed(2)} km`;
-  $('peek-summary').textContent = $('summary').textContent;
+  setLine(points);
+  segmentShapes = state.importedTrack ? [] : shapes;
+  $('summary').innerHTML = `${(routeLength(points) / 1000).toFixed(1)}<small>km</small>`;
   findPlaces(points, version);
-  if (points.length < 2) { samples = []; $('stats').textContent = ''; $('elevation-status').textContent = ''; updateChart(); return; }
-  $('elevation-status').textContent = '標高を取得中…';
+  if (points.length < 2) { samples = []; renderStats(); status.set('elevation', ''); updateChart(); return; }
+  status.set('elevation', '標高を取得中…', 'busy');
   const initial = sampleRoute(points, CONFIG.elevation.intervalM);
   const next = state.importedTrack && initial.every(s => s.ele !== null) ? initial : await dem.sample(initial, () => version === revision);
   if (version !== revision) return;
@@ -127,55 +125,83 @@ const calculate = debounce(async (version: number) => {
   });
   const stats = elevationStats(samples.map(s => s.ele), CONFIG.elevation.hysteresisM);
   const missing = samples.filter(s => s.ele === null).length;
-  $('elevation-status').textContent = missing ? `標高欠測 ${missing}/${samples.length} 点。統計は取得できた範囲のみです。` : '';
-  $('stats').innerHTML = `<div><span>↗ 登り</span><strong>${Math.round(stats.ascent)}<small> m</small></strong></div><div><span>↘ 下り</span><strong>${Math.round(stats.descent)}<small> m</small></strong></div><div><span>△ 最高点</span><strong>${stats.highest === null ? '—' : Math.round(stats.highest)}<small> m</small></strong></div>`;
+  status.set('elevation', missing ? `標高欠測 ${missing}/${samples.length} 点。統計は取得できた範囲のみです。` : '', 'warn');
+  renderStats(stats); updateWaypointMetrics(points);
   updateChart();
   readyRevision = version; syncExport();
 }, CONFIG.routing.debounceMs);
+function renderStats(stats?: ReturnType<typeof elevationStats>) {
+  $('stats').innerHTML = [['登り', stats?.highest == null ? null : stats.ascent], ['下り', stats?.highest == null ? null : stats.descent], ['最高点', stats?.highest]].map(([label, value]) => `<div class="stat"><dt>${label}</dt><dd class="num">${typeof value === 'number' ? Math.round(value).toLocaleString('ja-JP') : '—'}<small>m</small></dd></div>`).join('');
+}
+function updateWaypointMetrics(track: Point[]) {
+  const ends = [0];
+  segmentShapes.forEach((shape, i) => ends.push(ends[i] + routeLength(shape) + (i && shape.length && segmentShapes[i - 1].length ? distance(segmentShapes[i - 1].at(-1)!, shape[0]) : 0)));
+  history.value.points.forEach((point, i) => {
+    // A closed route visits the same coordinate twice. Keep waypoint order.
+    const d = segmentShapes.length ? ends[i] : i === 0 ? 0 : i === history.value.points.length - 1 ? routeLength(track) : nearestOnRoute(point, track).routeDistance;
+    const sample = samples.reduce<Sample | undefined>((best, s) => !best || Math.abs(s.distance - d) < Math.abs(best.distance - d) ? s : best, undefined);
+    const sub = document.querySelector<HTMLElement>(`[data-waypoint="${i}"] .sub`);
+    if (sub) sub.textContent = `${(d / 1000).toFixed(1)} km · 標高${sample?.ele == null ? '—' : Math.round(sample.ele).toLocaleString('ja-JP')}m`;
+  });
+}
 function render() {
+  routeDrag.cancel(); segmentShapes = [];
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
-  $('summary').textContent = '— km'; $('peek-summary').textContent = history.value.points.length > 1 ? '計算中…' : '0.00 km';
-  $('storage-status').textContent = saveRoute(history.value) ? '' : '自動保存できません。GPX保存をご利用ください。';
-  $<HTMLInputElement>('route-name').value = history.value.name;
-  samples = []; updateChart(); $('stats').textContent = ''; $('elevation-status').textContent = '';
-  places = []; renderPlaces(); $('places-status').textContent = '';
+  $('summary').innerHTML = '—<small>km</small>';
+  status.set('notice', '');
+  status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。GPX保存をご利用ください。', 'warn');
+  document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.value = history.value.name);
+  samples = []; updateChart(); renderStats(); status.set('elevation', '');
+  places = []; renderPlaces(); $('places-status').textContent = history.value.points.length < 2 ? 'ルートを描くと近くの峠・山を表示します。' : '峠・山を検索待ち…';
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;
   $('point-count').textContent = String(state.points.length);
-  $<HTMLSelectElement>('profile').value = state.profile;
-  $<HTMLInputElement>('follow').checked = state.followRoad;
-  $<HTMLButtonElement>('undo').disabled = !history.canUndo;
-  $<HTMLButtonElement>('clear').disabled = !state.points.length;
+  document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === state.profile)));
+  document.querySelectorAll<HTMLInputElement>('[data-follow]').forEach(input => input.checked = state.followRoad);
+  document.querySelectorAll<HTMLButtonElement>('[data-action="undo"]').forEach(b => b.disabled = !history.canUndo);
+  document.querySelectorAll<HTMLButtonElement>('[data-action="clear"]').forEach(b => b.disabled = !state.points.length);
+  $('hint').hidden = state.points.length >= 2;
   state.points.forEach((point, i) => {
-    const marker = L.marker([point.lat, point.lng], { draggable: true, title: `経由点 ${i + 1}`, icon: L.divIcon({ className: 'waypoint', html: String(i + 1), iconSize: [32, 32], iconAnchor: [16, 16] }) }).addTo(markers);
+    const cls = i === 0 ? 'start' : i === state.points.length - 1 ? 'goal' : '', badge = i === 0 ? 'S' : i === state.points.length - 1 ? 'G' : String(i + 1);
+    const marker = L.marker([point.lat, point.lng], { draggable: true, title: `経由点 ${i + 1}`, icon: L.divIcon({ className: '', html: `<div class="wp-marker ${cls}">${badge}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(markers);
     marker.on('dragend', () => { const p = marker.getLatLng(); change({ ...history.value, points: history.value.points.map((old, index) => index === i ? { lat: p.lat, lng: p.lng } : old) }); });
     const button = document.createElement('button'); button.textContent = `経由点 ${i + 1} を削除`; button.onclick = () => { remove(i); map.closePopup(); };
     marker.bindPopup(button);
-    const item = document.createElement('li');
-    const focus = document.createElement('button'); focus.textContent = `${i + 1} · ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`; focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
-    const del = document.createElement('button'); del.textContent = '削除'; del.setAttribute('aria-label', `経由点 ${i + 1} を削除`); del.onclick = () => remove(i);
-    item.append(focus, del); $('waypoints').append(item);
+    const item = document.createElement('li'); item.className = 'row'; item.dataset.waypoint = String(i);
+    const label = document.createElement('span'); label.className = `wp-badge ${cls}`; label.textContent = badge;
+    const focus = document.createElement('button'); focus.className = 'waypoint-focus row-copy';
+    focus.innerHTML = `<span class="name">${i === 0 ? 'スタート' : i === state.points.length - 1 ? 'ゴール' : '経由点'}</span><span class="sub num">—</span>`;
+    focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
+    const del = document.createElement('button'); del.className = 'icon-btn del'; del.innerHTML = icon('x'); del.setAttribute('aria-label', `経由点 ${i + 1} を削除`); del.onclick = () => remove(i);
+    item.append(label, focus, del); $('waypoints').append(item);
   });
-  line.setLatLngs(state.points.map(p => [p.lat, p.lng]));
+  setLine(state.importedTrack ?? state.points);
   calculate(revision);
 }
+const routeDrag = installRouteDrag(map, line, () => ({ shapes: segmentShapes, points: history.value.points, revision, enabled: !history.value.importedTrack && segmentShapes.length > 0 }), (index, point) => {
+  const points = [...history.value.points]; points.splice(index, 0, point); change({ ...history.value, points });
+});
 map.on('click', (event: L.LeafletMouseEvent) => change({ ...history.value, points: [...history.value.points, { lat: event.latlng.lat, lng: event.latlng.lng }] }));
 $('profile').onchange = () => change({ ...history.value, profile: $<HTMLSelectElement>('profile').value as Profile });
 $('follow').onchange = () => change({ ...history.value, followRoad: $<HTMLInputElement>('follow').checked });
 $('undo').onclick = () => { history.undo(); render(); };
 $('clear').onclick = () => change({ ...history.value, points: [] });
-$('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [32, 32], paddingBottomRight: [32, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 32], maxZoom: 16 }); };
-$('route-name').onchange = () => { history.value.name = $<HTMLInputElement>('route-name').value.trim() || '新しいルート'; $('storage-status').textContent = saveRoute(history.value) ? '' : '自動保存できません。'; };
+$('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
+document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
+  history.value.name = input.value.trim() || '新しいルート';
+  document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(other => other.value = history.value.name);
+  status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
+});
 $('import').onclick = () => $<HTMLInputElement>('file').click();
 $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
     if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
     const imported = parseGPX(await file.text()); change(imported.state, true);
-    line.setLatLngs(imported.track.map(p => [p.lat, p.lng])); $('fit').click();
-  } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした'); }
+    setLine(imported.track); $('fit').click();
+  } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
 };
 $('export').onclick = () => {
@@ -186,15 +212,16 @@ $('export').onclick = () => {
 };
 $('share').onclick = async () => {
   const url = new URL(location.href); url.hash = encodeRoute(history.value);
-  const input = $<HTMLInputElement>('share-url'); input.hidden = false; input.value = url.href; input.select();
-  try { await navigator.clipboard.writeText(url.href); notify('共有URLをコピーしました。経由点から受信側で再計算します。'); } catch { notify('共有URLを表示しました。選択してコピーしてください。'); }
+  const input = $<HTMLInputElement>('share-url'); input.value = url.href;
+  try { await navigator.clipboard.writeText(url.href); input.hidden = true; notify('共有URLをコピーしました。経由点から受信側で再計算します。'); } catch { input.hidden = false; if (matchMedia('(max-width: 767px)').matches) sheet.expand(); input.focus(); input.select(); input.scrollIntoView({ block: 'nearest' }); notify('共有URLを表示しました。選択してコピーしてください。'); }
 };
 window.addEventListener('hashchange', () => {
   if (!location.hash.startsWith('#route=')) return;
-  try { const shared = consumeSharedRoute(); if (shared) { change(shared, true); $('fit').click(); } } catch (error) { notify((error as Error).message); }
+  try { const shared = consumeSharedRoute(); if (shared) { change(shared, true); $('fit').click(); } } catch (error) { notify((error as Error).message, 'warn'); }
 });
 let startupError = '';
 try { history.value = consumeSharedRoute() ?? loadRoute() ?? history.value; } catch (error) { history.value = loadRoute() ?? history.value; startupError = (error as Error).message; }
 render();
 if (history.value.points.length) $('fit').click();
-if (startupError) $('storage-status').textContent = startupError;
+if (startupError) status.set('storage', startupError, 'warn');
+let chartWidth = 0; new ResizeObserver(entries => { const width = entries[0].contentRect.width; if (width !== chartWidth) { chartWidth = width; updateChart(); } }).observe($('chart'));

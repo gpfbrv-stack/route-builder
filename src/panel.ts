@@ -1,26 +1,19 @@
 export function installPanel(panel: HTMLElement, handle: HTMLButtonElement) {
   const mobile = matchMedia('(max-width: 767px)');
-  let height = 112, startY = 0, startHeight = 0, dragged = false;
-  const limits = () => ({ min: 112, max: Math.max(160, (panel.parentElement?.clientHeight ?? 600) * 0.85) });
-  const apply = (next: number) => {
-    const { min, max } = limits(); height = Math.min(max, Math.max(min, next));
-    panel.parentElement!.style.setProperty('--panel-height', `${height}px`);
-    handle.setAttribute('aria-expanded', String(height > min + 20));
-    handle.setAttribute('aria-label', height > min + 20 ? 'ルート情報を閉じる' : 'ルート情報を開く');
+  const snaps = () => [168, Math.round(innerHeight * .5), Math.round(innerHeight * .88)];
+  let snap = 0, height = 168, startY = 0, startHeight = 0, dragging = false, moved = false;
+  const apply = (h: number) => { height = h; document.documentElement.style.setProperty('--sheet-h', `${h}px`); };
+  const toSnap = (i: number) => { snap = i; apply(snaps()[i]); handle.setAttribute('aria-expanded', String(i > 0)); handle.setAttribute('aria-label', `ルート情報（${['最小', '半分', '全体'][i]}）。押すと次の高さ`); };
+  handle.onpointerdown = e => { if (!mobile.matches) return; startY = e.clientY; startHeight = height; dragging = true; moved = false; handle.setPointerCapture(e.pointerId); document.documentElement.classList.add('sheet-dragging'); };
+  handle.onpointermove = e => { if (!dragging) return; const delta = startY - e.clientY; moved ||= Math.abs(delta) > 6; if (moved) apply(Math.max(168, Math.min(snaps()[2], startHeight + delta))); };
+  const end = (e: PointerEvent) => {
+    if (!dragging) return; dragging = false; document.documentElement.classList.remove('sheet-dragging');
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    const s = snaps(); toSnap(s.reduce((best, h, i) => Math.abs(h - height) < Math.abs(s[best] - height) ? i : best, 0));
   };
-  handle.onpointerdown = event => {
-    if (!mobile.matches) return;
-    startY = event.clientY; startHeight = height; dragged = false; handle.setPointerCapture(event.pointerId);
-  };
-  handle.onpointermove = event => {
-    if (!handle.hasPointerCapture(event.pointerId)) return;
-    const delta = startY - event.clientY; if (Math.abs(delta) > 6) dragged = true;
-    if (dragged) apply(startHeight + delta);
-  };
-  handle.onpointerup = event => { if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId); };
-  handle.onclick = () => { if (dragged) { dragged = false; return; } apply(height > limits().min + 20 ? limits().min : limits().max); };
-  handle.onkeydown = event => {
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); apply(height + (event.key === 'ArrowUp' ? 64 : -64)); }
-  };
-  window.addEventListener('resize', () => apply(height)); apply(height);
+  handle.onpointerup = end; handle.onpointercancel = end;
+  handle.onclick = () => { if (moved) { moved = false; return; } toSnap((snap + 1) % 3); };
+  handle.onkeydown = e => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); toSnap(Math.max(0, Math.min(2, snap + (e.key === 'ArrowUp' ? 1 : -1)))); } };
+  window.addEventListener('resize', () => toSnap(snap)); toSnap(0);
+  return { expand: () => toSnap(2), panel };
 }

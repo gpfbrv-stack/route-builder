@@ -75,11 +75,9 @@ export class GoogleLayer extends L.Layer {
     }
   }
 }
-export function addGoogleLayers(map: L.Map, controls: L.Control.Layers, fallback: () => void, notify: (message: string) => void, key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim()) {
-  if (!key) return;
+export function addGoogleLayers(fallback: () => void, notify: (message: string) => void, key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim()): Record<string, L.Layer> {
+  if (!key) return {};
   const sessions = new GoogleSessions(key);
   const names: Record<GoogleMapType, string> = { roadmap: 'Google 道路', satellite: 'Google 航空写真', terrain: 'Google 地形' };
-  for (const type of Object.keys(names) as GoogleMapType[]) controls.addBaseLayer(new GoogleLayer(type, key, sessions, notify, fallback), names[type]);
-  // Limits exist on tile layers; registering no Google key leaves ordinary maps unchanged.
-  void map;
+  return Object.fromEntries((Object.keys(names) as GoogleMapType[]).map(type => [names[type], new GoogleLayer(type, key, sessions, notify, fallback)]));
 }
