@@ -3,6 +3,10 @@ import { cacheSet, RequestQueue } from './async';
 import { distance, validPoint } from './geo';
 import type { Point, Segment } from './types';
 
+declare module './types' {
+  interface Segment { bridged?: boolean }
+}
+
 const ZOOM_SIZE = 2 ** 16;
 const EARTH_RADIUS = 6371008.8;
 const RAD = Math.PI / 180;
@@ -12,7 +16,7 @@ const CONCURRENCY = 6;
 const TIMEOUT_MS = 15000;
 type Current = () => boolean;
 type Lines = Point[][];
-interface Edge { a: number; b: number }
+interface Edge { a: number; b: number; bridged?: boolean }
 interface Graph { nodes: Point[]; edges: Edge[] }
 interface Snap { edge: number; t: number; point: Point }
 
@@ -121,12 +125,58 @@ function buildGraph(tiles: Lines[]): Graph {
     const key = `${Math.min(a, b)},${Math.max(a, b)}`;
     if (!unique.has(key)) { unique.add(key); merged.push({ a, b }); }
   }
-  return { nodes, edges: merged };
+  const graph = { nodes, edges: merged };
+  bridgeComponents(graph);
+  return graph;
+}
+
+function bridgeComponents({ nodes, edges }: Graph) {
+  const parents = nodes.map((_, i) => i);
+  const root = (id: number): number => {
+    while (parents[id] !== id) { parents[id] = parents[parents[id]]; id = parents[id]; }
+    return id;
+  };
+  const active = new Set<number>();
+  for (const { a, b } of edges) {
+    active.add(a); active.add(b);
+    const ra = root(a), rb = root(b);
+    parents[Math.max(ra, rb)] = Math.min(ra, rb);
+  }
+  // Only surviving road vertices participate; merged-away endpoints are not roads.
+  const components = nodes.map((_, id) => root(id));
+  const cells = new Map<string, number[]>();
+  const bridges = new Map<string, { a: number; b: number; length: number }>();
+  const size = CONFIG.gsi.bridgeM;
+  if (size <= 0) return;
+  for (const id of active) {
+    const p = nodes[id], lat = p.lat * RAD, lng = p.lng * RAD;
+    // A spherical distance <= size also has each Cartesian difference <= size.
+    // Thus the 27 neighbouring cells cover every candidate, including boundaries.
+    const x = Math.floor(EARTH_RADIUS * Math.cos(lat) * Math.cos(lng) / size);
+    const y = Math.floor(EARTH_RADIUS * Math.cos(lat) * Math.sin(lng) / size);
+    const z = Math.floor(EARTH_RADIUS * Math.sin(lat) / size);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      for (const other of cells.get(`${x + dx},${y + dy},${z + dz}`) ?? []) {
+        const a = components[id], b = components[other];
+        if (a === b) continue;
+        const length = distance(p, nodes[other]);
+        if (length > size) continue;
+        const key = `${Math.min(a, b)},${Math.max(a, b)}`;
+        if (length < (bridges.get(key)?.length ?? Infinity)) bridges.set(key, { a: id, b: other, length });
+      }
+    }
+    const key = `${x},${y},${z}`;
+    const bucket = cells.get(key) ?? [];
+    bucket.push(id); cells.set(key, bucket);
+  }
+  // Keep the original component labels: adding a bridge must not suppress other pairs.
+  for (const { a, b } of bridges.values()) edges.push({ a, b, bridged: true });
 }
 
 function snap(point: Point, graph: Graph): Snap {
   let best: Snap | undefined, nearest = Infinity;
   graph.edges.forEach((edge, index) => {
+    if (edge.bridged) return; // Snap waypoints to surveyed roads, not synthetic links.
     const a = graph.nodes[edge.a], b = graph.nodes[edge.b];
     const k = Math.cos((a.lat + b.lat + point.lat) / 3 * RAD);
     const ax = (a.lng - point.lng) * k, ay = a.lat - point.lat;
@@ -171,7 +221,7 @@ class MinHeap {
   }
 }
 
-function shortestPath(graph: Graph, start: Snap, end: Snap, isCurrent: Current): Point[] {
+function shortestPath(graph: Graph, start: Snap, end: Snap, isCurrent: Current): { points: Point[]; bridged: boolean } {
   const { nodes, edges } = graph;
   const splits = new Map<number, { t: number; node: number }[]>();
   const insert = (projection: Snap) => {
@@ -186,17 +236,19 @@ function shortestPath(graph: Graph, start: Snap, end: Snap, isCurrent: Current):
   };
   // Insert both projections together: two points on the same edge must connect directly.
   const source = insert(start), target = insert(end);
-  const neighbours: { node: number; weight: number }[][] = nodes.map(() => []);
+  const neighbours: { node: number; weight: number; bridged: boolean }[][] = nodes.map(() => []);
   edges.forEach((edge, index) => {
     const cuts = (splits.get(index) ?? []).sort((a, b) => a.t - b.t);
     const chain = [edge.a, ...cuts.map(cut => cut.node), edge.b];
     for (let i = 1; i < chain.length; i++) {
-      const a = chain[i - 1], b = chain[i], weight = distance(nodes[a], nodes[b]);
-      neighbours[a].push({ node: b, weight }); neighbours[b].push({ node: a, weight });
+      const a = chain[i - 1], b = chain[i], bridged = edge.bridged === true;
+      const weight = distance(nodes[a], nodes[b]) * (bridged ? CONFIG.gsi.bridgePenalty : 1);
+      neighbours[a].push({ node: b, weight, bridged }); neighbours[b].push({ node: a, weight, bridged });
     }
   });
   const costs = new Float64Array(nodes.length).fill(Infinity);
   const previous = new Int32Array(nodes.length).fill(-1);
+  const previousBridge = new Uint8Array(nodes.length);
   const queue = new MinHeap();
   costs[source] = 0;
   queue.push({ node: source, cost: 0, estimate: distance(nodes[source], nodes[target]) });
@@ -206,13 +258,18 @@ function shortestPath(graph: Graph, start: Snap, end: Snap, isCurrent: Current):
     if (step.cost !== costs[step.node]) continue;
     if (step.node === target) {
       const path: Point[] = [];
-      for (let id = target; id !== -1; id = previous[id]) path.push(nodes[id]);
-      return path.reverse();
+      let bridged = false;
+      for (let id = target; id !== -1; id = previous[id]) {
+        path.push(nodes[id]);
+        bridged ||= previousBridge[id] === 1;
+      }
+      return { points: path.reverse(), bridged };
     }
     for (const next of neighbours[step.node]) {
       const cost = step.cost + next.weight;
       if (cost < costs[next.node]) {
         costs[next.node] = cost; previous[next.node] = step.node;
+        previousBridge[next.node] = Number(next.bridged);
         queue.push({ node: next.node, cost, estimate: cost + distance(nodes[next.node], nodes[target]) });
       }
     }
@@ -273,6 +330,6 @@ export class GsiRouter {
     const start = snap(a, graph), end = snap(b, graph);
     const path = shortestPath(graph, start, end, isCurrent);
     checkCurrent(isCurrent);
-    return { points: [a, ...path, b], fallback: false };
+    return { points: [a, ...path.points, b], fallback: false, ...(path.bridged ? { bridged: true } : {}) };
   }
 }

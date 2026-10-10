@@ -68,17 +68,116 @@ it('rounds all vertices to 1e-6 degrees, including an interior junction', async 
 
 it.each([1.5, 2.5])('merges only endpoints within 2 m (gap %s m)', async gap => {
   const { router } = fixture([line([point(0), point(200)]), line([point(200 + gap), point(400)])]);
-  const route = router.route(point(0), point(400));
-  if (gap < 2) expect(routeLength((await route).points)).toBeCloseTo(400, 0);
-  else await expect(route).rejects.toThrow('地理院の道がつながっていません');
+  const route = await router.route(point(0), point(400));
+  expect(routeLength(route.points)).toBeCloseTo(400, 0);
+  expect(route.bridged).toBe(gap < 2 ? undefined : true);
+  if (gap < 2) expect(route.points).not.toContainEqual(point(200 + gap));
+  else expect(route.points).toContainEqual(point(200 + gap));
 });
 
-it('does not join a nearby endpoint to a different interior vertex', async () => {
+it('bridges rather than merges a nearby endpoint and an interior vertex', async () => {
   const { router } = fixture([
     line([point(0), point(200), point(400)]),
     line([point(200, 1.5), point(200, 200)]),
   ]);
-  await expect(router.route(point(0), point(200, 200))).rejects.toThrow('地理院の道がつながっていません');
+  const result = await router.route(point(0), point(200, 200));
+  expect(result.bridged).toBe(true);
+  expect(result.points).toContainEqual(point(200));
+  expect(result.points).toContainEqual(point(200, 1.5));
+});
+
+it.each([16, 29.8, 30.2, 31])('bridges separate components only within 30 m (gap %s m)', async gap => {
+  expect(CONFIG.gsi.bridgeM).toBe(30);
+  const left = point(200), right = point(200 + gap);
+  const { router } = fixture([line([point(0), left]), line([right, point(400)])]);
+  if (gap > 30) {
+    await expect(router.route(point(0), point(400))).rejects.toThrow('地理院の道がつながっていません');
+  } else {
+    const result = await router.route(point(0), point(400));
+    expect(result.bridged).toBe(true);
+    expect(result.points).toContainEqual(left);
+    expect(result.points).toContainEqual(right);
+    expect(routeLength(result.points)).toBeCloseTo(400, 0); // Geometry is not multiplied by the penalty.
+    expect((await router.route(point(400), point(0))).bridged).toBe(true);
+  }
+});
+
+it('does not create a shortcut inside an existing component', async () => {
+  const a = point(0), b = point(16), bend1 = point(0, 100), bend2 = point(16, 100);
+  const { router } = fixture([line([a, bend1, bend2, b])]);
+  const result = await router.route(a, b);
+  expect(result.bridged).toBeUndefined();
+  expect(result.points).toContainEqual(bend1);
+  expect(result.points).toContainEqual(bend2);
+  expect(routeLength(result.points)).toBeCloseTo(216, 0);
+});
+
+it('adds only the closest bridge per original component pair', async () => {
+  // The closer pair comes last in the input, so keeping the first candidate is wrong.
+  const a = point(100), b = point(100, 20), left = point(0), right = point(0, 16);
+  const { router } = fixture([line([a, left]), line([b, right])]);
+  const result = await router.route(a, b);
+  expect(result.bridged).toBe(true);
+  expect(result.points).toContainEqual(left);
+  expect(result.points).toContainEqual(right);
+  expect(routeLength(result.points)).toBeCloseTo(216, 0);
+});
+
+it('penalizes bridges by three and prefers a cheaper normal road', async () => {
+  expect(CONFIG.gsi.bridgePenalty).toBe(3);
+  const a = point(0), b = point(50), bend1 = point(0, -40), bend2 = point(50, -40);
+  const { router } = fixture([
+    line([a, bend1, bend2, b]),
+    line([point(0, 16), point(10, 16)]),
+    line([point(38, 16), point(50, 16)]),
+  ]);
+  const result = await router.route(a, b);
+  expect(result.bridged).toBeUndefined();
+  expect(routeLength(result.points)).toBeCloseTo(130, 0);
+  // Control: the three bridges form a physically shorter route, but cost more at x3.
+  const penalty = CONFIG.gsi.bridgePenalty;
+  try {
+    CONFIG.gsi.bridgePenalty = 1;
+    const unpenalized = await router.route(a, b);
+    expect(unpenalized.bridged).toBe(true);
+    expect(routeLength(unpenalized.points)).toBeCloseTo(82, 0);
+  } finally { CONFIG.gsi.bridgePenalty = penalty; }
+});
+
+it.each([[16, 0], [0, 16], [16, 16], [-16, 16]])('finds bridges across grid boundaries (offset %s, %s)', async (east, north) => {
+  // Around (0, 0), Cartesian y/z cells change sign; diagonal neighbours are required.
+  const local = (x: number, y: number): Point => ({
+    lat: Math.round(y / (R * RAD) * 1e6) / 1e6 + 0,
+    lng: Math.round(x / (R * RAD) * 1e6) / 1e6 + 0,
+  });
+  const a = local(-east / 2, -north / 2), b = local(east / 2, north / 2);
+  const start = local(-east * 5, -north * 5), end = local(east * 5, north * 5);
+  const { router } = fixture([line([start, a]), line([b, end])]);
+  const result = await router.route(start, end);
+  expect(result.bridged).toBe(true);
+  expect(result.points).toContainEqual(a);
+  expect(result.points).toContainEqual(b);
+});
+
+it('includes a bridge exactly at the configured distance limit', async () => {
+  const a = point(0), b = point(16);
+  const { router } = fixture([line([point(-100), a]), line([b, point(100)])]);
+  const limit = CONFIG.gsi.bridgeM;
+  try {
+    CONFIG.gsi.bridgeM = distance(a, b);
+    expect((await router.route(point(-100), point(100))).bridged).toBe(true);
+    CONFIG.gsi.bridgeM -= 0.001;
+    await expect(router.route(point(-100), point(100))).rejects.toThrow('地理院の道がつながっていません');
+  } finally { CONFIG.gsi.bridgeM = limit; }
+});
+
+it('snaps a waypoint in a gap to a real road rather than the synthetic bridge', async () => {
+  const a = point(0), b = point(16);
+  const { router } = fixture([line([point(-100), a]), line([b, point(100)])]);
+  const result = await router.route(point(7), point(100));
+  expect(result.bridged).toBe(true);
+  expect(result.points[1]).toEqual(a);
+  expect(result.points).toContainEqual(b);
 });
 
 it.each(['2701', '2703', '2704', '2711', '2721'])('uses road code %s regardless of text access attributes', async ftCode => {
