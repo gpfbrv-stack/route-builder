@@ -8,3 +8,11 @@ main { height: calc(100dvh - 72px); display: grid; grid-template-columns: minmax
 #panel { padding: 24px; overflow-y: auto; background: white; }
 :focus-visible { outline: 3px solid black !important; outline-offset: 2px; box-shadow: 0 0 0 2px #ffd43d !important; }
 @media (max-width: 767px) { header { padding: 8px 16px; } header p { display: none; } main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 2fr 1fr; } }
+button, select, input { font: inherit; }
+button, select { min-height: 40px; padding: 8px; border: 1px solid #7f7f7f; border-radius: 8px; background: white; color: #0017c1; cursor: pointer; }
+button:disabled { color: #666; cursor: default; background: #f2f2f2; }
+#toolbar { min-height: 64px; padding: 8px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+main { height: calc(100dvh - 136px); }
+.waypoint { border: 2px solid white; border-radius: 50%; background: #0017c1; color: white; text-align: center; line-height: 28px; font-weight: bold; }
+#waypoints { padding: 0; list-style: none; } #waypoints li { display: flex; gap: 8px; margin-bottom: 8px; }
+#notice { color: #664400; font-size: 14px; min-height: 24px; }

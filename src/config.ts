@@ -1,5 +1,10 @@
 export const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
 export const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>';
+export const CONFIG = {
+  profiles: { mtb: { label: '山サイ', api: 'mtb' }, gravel: { label: 'グラベル', api: 'gravel' }, road: { label: 'ロード', api: 'fastbike' } },
+  routing: { debounceMs: 500, concurrency: 2, timeoutMs: 30000, cacheSize: 512 },
+};
+export type Profile = keyof typeof CONFIG.profiles;
 export const BASE_LAYERS = [
   { name: '地理院 標準', url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', maxNativeZoom: 18, attribution: GSI_ATTRIBUTION },
   { name: '地理院 淡色', url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', maxNativeZoom: 18, attribution: GSI_ATTRIBUTION },
