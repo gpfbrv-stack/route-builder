@@ -10,7 +10,7 @@ export class Router {
   private cache = new Map<string, Point[]>();
   private pending = new Map<string, Promise<Segment>>();
   private queue = new RequestQueue(CONFIG.routing.concurrency);
-  constructor(private request: typeof fetch = fetch) {}
+  constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   segment(a: Point, b: Point, profile: Profile): Promise<Segment> {
     if (distance(a, b) < 0.1) return Promise.resolve({ points: [a, b], fallback: false });
     const key = segmentKey(a, b, profile);

@@ -1,22 +1,76 @@
-:root { font-family: 'Noto Sans JP', 'Yu Gothic', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; color: #1a1a1a; background: #f2f2f2; font-synthesis: none; }
+:root { font-family: 'Noto Sans JP', 'Yu Gothic', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; color: #1a1a1a; background: #f2f2f2; font-synthesis: none; font-size: 16px; line-height: 1.6; --primary: #0017c1; --border: #7f7f7f; }
 * { box-sizing: border-box; }
-body { margin: 0; }
-header { height: 72px; padding: 8px 24px; background: white; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid #7f7f7f; }
-h1 { font-size: 20px; } h2 { font-size: 18px; }
-main { height: calc(100dvh - 72px); display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
-#map { height: 100%; min-width: 0; z-index: 0; }
-#panel { padding: 24px; overflow-y: auto; background: white; }
-:focus-visible { outline: 3px solid black !important; outline-offset: 2px; box-shadow: 0 0 0 2px #ffd43d !important; }
-@media (max-width: 767px) { header { padding: 8px 16px; } header p { display: none; } main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 2fr 1fr; } }
+body { margin: 0; overflow: hidden; }
+#app { height: 100dvh; display: flex; flex-direction: column; }
+header { flex: none; min-height: 80px; padding: 8px 24px; background: #fff; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #ddd; }
+h1 { font-size: 20px; line-height: 1.3; margin: 0; letter-spacing: .02em; }
+header p { margin: 0; font-size: 12px; color: #666; }
+.brand-symbol { color: #fff; background: var(--primary); width: 40px; height: 40px; border-radius: 8px; text-align: center; line-height: 40px; font-size: 28px; }
+.phase-tag { margin-left: auto; letter-spacing: .16em; font-size: 11px; color: #666; }
+h2 { font-size: 16px; margin: 24px 0 8px; }
+.panel-title { font-size: 20px; margin-top: 0; }
 button, select, input { font: inherit; }
-button, select { min-height: 40px; padding: 8px; border: 1px solid #7f7f7f; border-radius: 8px; background: white; color: #0017c1; cursor: pointer; }
-button:disabled { color: #666; cursor: default; background: #f2f2f2; }
-#toolbar { min-height: 64px; padding: 8px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-main { height: calc(100dvh - 136px); }
-.waypoint { border: 2px solid white; border-radius: 50%; background: #0017c1; color: white; text-align: center; line-height: 28px; font-weight: bold; }
-#waypoints { padding: 0; list-style: none; } #waypoints li { display: flex; gap: 8px; margin-bottom: 8px; }
-#notice { color: #664400; font-size: 14px; min-height: 24px; }
-#chart svg { width: 100%; height: auto; font-size: 11px; overflow: visible; }
-#chart input { width: 100%; accent-color: #0017c1; }
-.chart-readout { display: block; font-size: 13px; min-height: 40px; }
-#elevation-status { font-size: 14px; color: #664400; }
+button, select { min-height: 40px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--primary); cursor: pointer; font-size: 14px; }
+button:hover:not(:disabled) { background: #e8f1fe; }
+button:disabled { color: #666; cursor: default; background: #f2f2f2; border-color: #ccc; }
+input:not([type=checkbox]):not([type=range]) { min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; width: 100%; }
+input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); vertical-align: middle; }
+#toolbar { flex: none; min-height: 64px; padding: 8px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff; border-bottom: 1px solid var(--border); }
+#toolbar label { font-size: 14px; margin-right: 8px; white-space: nowrap; }
+#export { background: var(--primary); color: white; border-color: var(--primary); }
+#export:disabled { background: #f2f2f2; color: #666; border-color: #ccc; }
+main { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 384px; --panel-height: 112px; }
+#map { height: 100%; min-width: 0; z-index: 0; background: #e8ecdf; }
+#panel { min-width: 0; overflow: hidden; background: #fff; border-left: 1px solid var(--border); }
+#panel-content { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 24px; }
+#panel-toggle { display: none; }
+.hint { font-size: 13px; color: #666; margin: 8px 0 16px; }
+small { font-size: 12px; color: #666; }
+#panel label { display: block; font-size: 13px; color: #666; }
+#route-name { display: block; font-size: 16px; color: #1a1a1a; margin-top: 8px; }
+#notice, #elevation-status, #storage-status, #places-status { font-size: 13px; overflow-wrap: anywhere; }
+#notice, #elevation-status, #storage-status { color: #664400; }
+#notice { margin-top: 16px; }
+#places-status { color: #666; }
+#storage-status:empty, #elevation-status:empty { display: none; }
+.distance-label { color: #666; font-size: 13px; margin: 24px 0 0; }
+#summary { font-size: 32px; font-weight: 700; line-height: 1.2; margin: 0 0 16px; font-variant-numeric: tabular-nums; }
+#stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+#stats > div { padding: 8px; background: #f2f2f2; border-radius: 8px; }
+#stats span { display: block; font-size: 12px; color: #666; }
+#stats strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+#stats small { font-weight: 400; }
+#chart { min-height: 48px; font-size: 13px; }
+#chart svg { width: 100%; height: auto; font-size: 11px; overflow: hidden; touch-action: pan-y; }
+#chart input { width: 100%; accent-color: var(--primary); min-height: 32px; }
+.chart-readout { display: block; font-size: 12px; min-height: 40px; color: #666; }
+#waypoints, #places { padding: 0; list-style: none; }
+#waypoints li { display: flex; gap: 8px; margin-bottom: 8px; }
+#waypoints li button:first-child { flex: 1; min-width: 0; font-size: 12px; font-variant-numeric: tabular-nums; padding: 8px; }
+#waypoints li button:last-child { flex: none; padding: 8px; }
+#places button { text-align: left; width: 100%; margin-bottom: 8px; overflow-wrap: anywhere; color: #115a36; }
+.waypoint { border: 2px solid white; border-radius: 50%; background: var(--primary); color: white; text-align: center; line-height: 28px; font-weight: bold; }
+.leaflet-container { font: inherit; font-size: 12px; }
+.leaflet-tooltip { font-family: inherit; border: 1px solid #7f7f7f; box-shadow: none; border-radius: 8px; }
+.leaflet-control-attribution { max-width: min(500px, 75vw); font-size: 10px; overflow-wrap: anywhere; }
+.leaflet-control-layers { border-radius: 8px !important; box-shadow: none; }
+.leaflet-control-layers-toggle { width: 40px !important; height: 40px !important; }
+.leaflet-touch .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; }
+:focus-visible { outline: 3px solid #000 !important; outline-offset: 2px; box-shadow: 0 0 0 2px #ffd43d !important; }
+@media (max-width: 767px) {
+  header { min-height: 64px; padding: 8px 16px; gap: 8px; }
+  header h1 { font-size: 18px; } header p { font-size: 11px; } .phase-tag { display: none; }
+  #toolbar { padding: 8px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  #toolbar label { grid-column: span 2; margin: 0; font-size: 13px; }
+  #toolbar button { padding: 8px 0; min-height: 40px; font-size: 12px; }
+  #toolbar select { padding: 8px; font-size: 13px; }
+  main { display: block; }
+  #panel { position: absolute; bottom: 0; left: 0; right: 0; height: var(--panel-height); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; z-index: 1000; }
+  #panel-toggle { display: flex; width: 100%; height: 64px; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0 16px; padding: 8px 16px; border: 0; border-bottom: 1px solid #ddd; border-radius: 8px 8px 0 0; color: #1a1a1a; touch-action: none; }
+  .grip { display: block; height: 4px; background: #7f7f7f; border-radius: 8px; width: 40px; margin: 0 calc(50% - 20px) 8px; }
+  #panel-content { height: calc(100% - 64px); padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .panel-title { font-size: 16px; }
+  #map .leaflet-bottom { bottom: calc(var(--panel-height) + 8px); }
+  .leaflet-control-attribution { max-width: 240px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

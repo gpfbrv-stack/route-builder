@@ -15,9 +15,10 @@ import { drawChart } from './chart';
 import { generateGPX, parseGPX, gpxFilename } from './gpx';
 import { encodeRoute, decodeRoute, loadRoute, saveRoute } from './persistence';
 import { cumulativeDistances } from './geo';
+import { installPanel } from './panel';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <header><h1>ルートビルダー</h1><p>自転車で、次の道へ</p></header>
+  <header><div class="brand-symbol" aria-hidden="true">↗</div><div><h1>ルートビルダー</h1><p>自転車で、次の道へ</p></div><span class="phase-tag">CYCLE ROUTE</span></header>
   <div id="toolbar">
     <label>走り方 <select id="profile">${Object.entries(CONFIG.profiles).map(([key, value]) => `<option value="${key}">${value.label}</option>`).join('')}</select></label>
     <label><input type="checkbox" id="follow" checked> 道に沿う</label>
@@ -25,19 +26,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <button id="import">GPX読込</button><input id="file" type="file" accept=".gpx,application/gpx+xml" hidden>
     <button id="export" disabled>GPX保存</button><button id="share">共有URL</button>
   </div>
-  <main><div id="map" aria-label="ルート作成地図"></div><aside id="panel">
-    <h2>ルートを描く</h2><p>地図をクリックして追加。経由点はドラッグで移動、クリックで削除できます。</p>
+  <main><div id="map" aria-label="ルート作成地図"></div><aside id="panel" aria-label="ルート情報">
+    <button id="panel-toggle" aria-controls="panel-content" aria-expanded="false"><span class="grip"></span><span>ルート情報</span><strong id="peek-summary">0.00 km</strong></button><div id="panel-content">
+    <h2 class="panel-title">ルートを描く</h2><p class="hint">地図をタップして追加。経由点はドラッグで移動、選択して削除できます。</p>
     <label>ルート名 <input id="route-name" maxlength="200" value="新しいルート"></label>
     <p id="storage-status" role="status"></p><input id="share-url" aria-label="共有URL" readonly hidden>
-    <div id="notice" role="status" aria-live="polite"></div><p id="summary">0.00 km</p>
+    <div id="notice" role="status" aria-live="polite"></div><p class="distance-label">ルート距離</p><p id="summary">0.00 km</p>
     <p id="elevation-status" role="status"></p><div id="stats"></div><h2>標高プロファイル</h2><div id="chart"></div>
     <small>標高: 地理院タイル / 登降は5mヒステリシスによる概算</small>
     <h2>通過する峠・山</h2><p id="places-status" role="status"></p><ul id="places"></ul>
     <h2>経由点 <span id="point-count">0</span></h2><ol id="waypoints"></ol>
-    <small>ルーティング: BRouter / ${OSM_ATTRIBUTION}</small>
-  </aside></main>`;
+    <p class="hint">経路は通行可能性を保証しません。現地の規制・通行状況をご確認ください。</p>
+    <small>ルート・地物: BRouter / ${OSM_ATTRIBUTION}</small>
+  </div></aside></main>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const map = createMap('map');
+installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
+new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 const markers = L.layerGroup().addTo(map);
 const line = L.polyline([], { color: '#0017c1', weight: 5 }).addTo(map);
 const router = new Router();
@@ -104,6 +109,7 @@ const calculate = debounce(async (version: number) => {
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   line.setLatLngs(points.map(p => [p.lat, p.lng]));
   $('summary').textContent = `${(routeLength(points) / 1000).toFixed(2)} km`;
+  $('peek-summary').textContent = $('summary').textContent;
   findPlaces(points, version);
   if (points.length < 2) { samples = []; $('stats').textContent = ''; $('elevation-status').textContent = ''; updateChart(); return; }
   $('elevation-status').textContent = '標高を取得中…';
@@ -122,13 +128,14 @@ const calculate = debounce(async (version: number) => {
   const stats = elevationStats(samples.map(s => s.ele), CONFIG.elevation.hysteresisM);
   const missing = samples.filter(s => s.ele === null).length;
   $('elevation-status').textContent = missing ? `標高欠測 ${missing}/${samples.length} 点。統計は取得できた範囲のみです。` : '';
-  $('stats').textContent = `登り ${Math.round(stats.ascent)} m / 下り ${Math.round(stats.descent)} m / 最高点 ${stats.highest === null ? '—' : Math.round(stats.highest) + ' m'}`;
+  $('stats').innerHTML = `<div><span>↗ 登り</span><strong>${Math.round(stats.ascent)}<small> m</small></strong></div><div><span>↘ 下り</span><strong>${Math.round(stats.descent)}<small> m</small></strong></div><div><span>△ 最高点</span><strong>${stats.highest === null ? '—' : Math.round(stats.highest)}<small> m</small></strong></div>`;
   updateChart();
   readyRevision = version; syncExport();
 }, CONFIG.routing.debounceMs);
 function render() {
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
+  $('summary').textContent = '— km'; $('peek-summary').textContent = history.value.points.length > 1 ? '計算中…' : '0.00 km';
   $('storage-status').textContent = saveRoute(history.value) ? '' : '自動保存できません。GPX保存をご利用ください。';
   $<HTMLInputElement>('route-name').value = history.value.name;
   samples = []; updateChart(); $('stats').textContent = ''; $('elevation-status').textContent = '';
@@ -159,7 +166,7 @@ $('profile').onchange = () => change({ ...history.value, profile: $<HTMLSelectEl
 $('follow').onchange = () => change({ ...history.value, followRoad: $<HTMLInputElement>('follow').checked });
 $('undo').onclick = () => { history.undo(); render(); };
 $('clear').onclick = () => change({ ...history.value, points: [] });
-$('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { padding: [32, 32], maxZoom: 16 }); };
+$('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [32, 32], paddingBottomRight: [32, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 32], maxZoom: 16 }); };
 $('route-name').onchange = () => { history.value.name = $<HTMLInputElement>('route-name').value.trim() || '新しいルート'; $('storage-status').textContent = saveRoute(history.value) ? '' : '自動保存できません。'; };
 $('import').onclick = () => $<HTMLInputElement>('file').click();
 $('file').onchange = async () => {
@@ -187,7 +194,7 @@ window.addEventListener('hashchange', () => {
   try { change(decodeRoute(location.hash), true); $('fit').click(); } catch (error) { notify((error as Error).message); }
 });
 let startupError = '';
-try { history.value = location.hash.startsWith('#route=') ? decodeRoute(location.hash) : loadRoute() ?? history.value; } catch (error) { startupError = (error as Error).message; }
+try { history.value = location.hash.startsWith('#route=') ? decodeRoute(location.hash) : loadRoute() ?? history.value; } catch (error) { history.value = loadRoute() ?? history.value; startupError = (error as Error).message; }
 render();
 if (history.value.points.length) $('fit').click();
 if (startupError) $('storage-status').textContent = startupError;

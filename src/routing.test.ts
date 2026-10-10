@@ -27,3 +27,8 @@ it('stops scheduling obsolete segments', async () => {
   expect(await new Router(fetcher).route(points, 'mtb', () => false)).toEqual([]);
   expect(fetcher).not.toHaveBeenCalled();
 });
+it('calls browser fetch without a Router receiver', async () => {
+  vi.stubGlobal('fetch', function(this: unknown) { if (this instanceof Router) throw new Error('Illegal invocation'); return Promise.resolve(response()); });
+  try { expect((await new Router().segment(points[0], points[1], 'mtb')).fallback).toBe(false); }
+  finally { vi.unstubAllGlobals(); }
+});

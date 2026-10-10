@@ -31,7 +31,7 @@ export function filterPlaces(nodes: OsmNode[], route: Point[]): Place[] {
 export class PlaceProvider {
   private cache = new Map<string, OsmNode[]>();
   private queue = new RequestQueue(1);
-  constructor(private request: typeof fetch = fetch) {}
+  constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   async get(route: Point[], current = () => true): Promise<Place[]> {
     const bbox = routeBBox(route), key = bbox.join(',');
     if (bbox[2] - bbox[0] > 2 || bbox[3] - bbox[1] > 2) throw new Error('検索範囲が広すぎます（緯度・経度2度以内）');
