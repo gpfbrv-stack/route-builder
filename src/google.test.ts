@@ -1,7 +1,89 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import L from 'leaflet';
+import { GoogleLayer } from './google-layer';
 import { GoogleSessions, sessionValid, sessionBody, viewportBounds, viewportParams, nativeZoom, type GoogleViewport } from './google';
 const session = (seconds: number) => ({ session: 'test-session', expiry: String(seconds), tileWidth: 512, tileHeight: 512 });
+describe('Google background transitions', () => {
+  let map: L.Map;
+  afterEach(() => {
+    map?.remove(); document.body.replaceChildren();
+    vi.restoreAllMocks(); vi.useRealTimers();
+  });
+  async function setup() {
+    vi.useFakeTimers();
+    // Real Leaflet layers/events, but no image URLs are requested.
+    vi.spyOn(L.TileLayer.prototype, 'createTile').mockImplementation(() => document.createElement('div'));
+    const factory = vi.spyOn(L, 'tileLayer');
+    const opacity = vi.spyOn(L.TileLayer.prototype, 'setOpacity');
+    let zoom = 19, token = 'first', copyright = 'first attribution';
+    const sessions = new GoogleSessions('test-key');
+    vi.spyOn(sessions, 'get').mockImplementation(async () => ({ ...session(Date.now() / 1000 + 7200), session: token }));
+    const request = vi.fn(async () => new Response(JSON.stringify({ copyright, maxZoomRects: [
+      { north: 90, south: -90, west: -180, east: 180, maxZoom: zoom },
+    ] })));
+    const container = document.createElement('div'); document.body.append(container);
+    map = L.map(container, { fadeAnimation: false }).setView([35, 135], 12);
+    const layer = new GoogleLayer('roadmap', 'test-key', sessions, vi.fn(), vi.fn(), request).addTo(map);
+    await vi.advanceTimersByTimeAsync(0);
+    const tiles = () => factory.mock.results.map(result => result.value as L.TileLayer);
+    const refresh = async (nextZoom = zoom, nextToken = token) => {
+      zoom = nextZoom; token = nextToken; copyright = 'updated attribution';
+      map.fire('movestart').fire('moveend');
+      await vi.advanceTimersByTimeAsync(400);
+    };
+    return { layer, tiles, refresh, request, opacity };
+  }
+  it('keeps tiles and attribution visible during movement and debounces viewport updates without rebuilding', async () => {
+    const { tiles, refresh, request, opacity } = await setup();
+    const first = tiles()[0];
+    map.fire('movestart').fire('zoomstart');
+    expect(opacity).not.toHaveBeenCalled();
+    expect(map.hasLayer(first)).toBe(true);
+    expect(map.getContainer().textContent).toContain('first attribution');
+    map.fire('moveend').fire('zoomend');
+    await vi.advanceTimersByTimeAsync(399);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await refresh();
+    expect(tiles()).toEqual([first]);
+    expect(opacity).not.toHaveBeenCalled();
+    expect(map.getContainer().textContent).toContain('updated attribution');
+  });
+  it.each(['zoom', 'token'])('adds the new layer before removing the old one on load when %s changes', async reason => {
+    const { tiles, refresh } = await setup();
+    await refresh(reason === 'zoom' ? 18 : 19, reason === 'token' ? 'second' : 'first');
+    const [old, next] = tiles();
+    expect(tiles()).toHaveLength(2);
+    expect(map.hasLayer(old)).toBe(true); expect(map.hasLayer(next)).toBe(true);
+    old.fire('load'); expect(map.hasLayer(old)).toBe(true);
+    next.fire('load');
+    expect(map.hasLayer(old)).toBe(false); expect(map.hasLayer(next)).toBe(true);
+  });
+  it('retires old tiles after exactly five seconds if load never arrives', async () => {
+    const { tiles, refresh } = await setup(); await refresh(18);
+    const [old, next] = tiles();
+    await vi.advanceTimersByTimeAsync(4999); expect(map.hasLayer(old)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1); expect(map.hasLayer(old)).toBe(false);
+    expect(map.hasLayer(next)).toBe(true);
+  });
+  it('keeps predecessors until the latest replacement loads during overlapping swaps', async () => {
+    const { tiles, refresh } = await setup(); await refresh(18); await refresh(17);
+    const [old, intermediate, latest] = tiles();
+    intermediate.fire('load'); expect(map.hasLayer(old)).toBe(true);
+    latest.fire('load');
+    expect(map.hasLayer(old)).toBe(false); expect(map.hasLayer(intermediate)).toBe(false);
+    expect(map.hasLayer(latest)).toBe(true);
+  });
+  it('cleans up both layers and pending load handlers when the background is removed', async () => {
+    const { layer, tiles, refresh, request } = await setup(); await refresh(18);
+    layer.remove();
+    for (const tile of tiles()) { expect(map.hasLayer(tile)).toBe(false); expect(tile.listens('load')).toBe(false); }
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(map.getContainer().textContent).not.toContain('updated attribution');
+  });
+});
 it('refreshes exactly one hour before expiry, in epoch seconds', () => {
   expect(sessionValid(session(7200), 3599999)).toBe(true);
   expect(sessionValid(session(7200), 3600000)).toBe(false);

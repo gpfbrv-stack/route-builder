@@ -6,6 +6,8 @@ const escapeHtml = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<'
 export class GoogleLayer extends L.Layer {
   private activeMap: L.Map | null = null;
   private tiles?: L.TileLayer;
+  private retiringTiles = new Set<L.TileLayer>();
+  private cancelSwap?: () => void;
   private logo?: L.Control;
   private controller?: AbortController;
   private timer?: ReturnType<typeof setTimeout>;
@@ -13,7 +15,7 @@ export class GoogleLayer extends L.Layer {
   private copyright = '';
   private token = '';
   private schedule = debounce(() => { void this.refresh(); }, GOOGLE.debounceMs);
-  private moving = () => { this.tiles?.setOpacity(0); this.generation++; this.controller?.abort(); };
+  private moving = () => { this.generation++; this.controller?.abort(); };
   private settled = () => { this.moving(); this.schedule(); };
   constructor(
     private type: GoogleMapType, private key: string, private sessions: GoogleSessions,
@@ -34,6 +36,9 @@ export class GoogleLayer extends L.Layer {
   onRemove(map: L.Map): this {
     this.activeMap = null; this.generation++; this.controller?.abort(); clearTimeout(this.timer);
     map.off('movestart zoomstart', this.moving).off('moveend zoomend resize', this.settled);
+    this.cancelSwap?.();
+    for (const tiles of this.retiringTiles) tiles.remove();
+    this.retiringTiles.clear();
     this.tiles?.remove(); this.tiles = undefined; this.logo?.remove();
     if (this.copyright) map.attributionControl.removeAttribution(this.copyright);
     this.copyright = ''; this.token = ''; this.notify(''); return this;
@@ -54,17 +59,35 @@ export class GoogleLayer extends L.Layer {
       if (!viewport.copyright || typeof viewport.copyright !== 'string') throw new Error('Missing attribution');
       const maxNativeZoom = nativeZoom(viewport, map.getCenter());
       if (version !== this.generation || !this.activeMap) return;
-      if (this.copyright) map.attributionControl.removeAttribution(this.copyright);
-      this.copyright = `背景地図: ${escapeHtml(viewport.copyright)}`;
-      map.attributionControl.addAttribution(this.copyright);
+      const copyright = `背景地図: ${escapeHtml(viewport.copyright)}`;
+      if (copyright !== this.copyright) {
+        map.attributionControl.addAttribution(copyright);
+        if (this.copyright) map.attributionControl.removeAttribution(this.copyright);
+        this.copyright = copyright;
+      }
       const url = `https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=${encodeURIComponent(session.session)}&key=${encodeURIComponent(this.key)}`;
       if (!this.tiles || this.tiles.options.maxNativeZoom !== maxNativeZoom || this.token !== session.session) {
-        this.tiles?.remove();
+        this.cancelSwap?.();
+        if (this.tiles) this.retiringTiles.add(this.tiles);
         // HiDPI returns 512px imagery for the SAME geographic tile; CSS stays 256px.
         this.tiles = L.tileLayer(url, { tileSize: 256, minZoom: 0, maxZoom: 22, maxNativeZoom, keepBuffer: 0, updateWhenIdle: true, updateWhenZooming: false, detectRetina: false });
         this.tiles.on('tileerror', () => { if (this.activeMap) this.notify('Googleタイルを取得できません。キーの制限・利用枠をご確認ください。'); });
+        if (this.retiringTiles.size) {
+          const next = this.tiles;
+          const finish = () => {
+            this.cancelSwap?.();
+            for (const tiles of this.retiringTiles) tiles.remove();
+            this.retiringTiles.clear();
+          };
+          const timeout = setTimeout(finish, 5000);
+          this.cancelSwap = () => {
+            clearTimeout(timeout); next.off('load', finish); this.cancelSwap = undefined;
+          };
+          // Subscribe before adding: cached tiles may finish loading immediately.
+          next.on('load', finish);
+        }
         this.tiles.addTo(map); this.token = session.session;
-      } else this.tiles.setOpacity(1);
+      }
       this.notify('Google背景を表示中');
       clearTimeout(this.timer);
       this.timer = setTimeout(() => { void this.refresh(); }, Math.max(1000, Math.min(86400000, Number(session.expiry) * 1000 - Date.now() - 3600000)));
