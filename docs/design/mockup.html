@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ルートビルダー UIモック</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* ===== デザイントークン(ha-dads / DADS ライト) ===== */
+:root {
+  --bg: #f2f2f2; --surface: #ffffff; --surface-2: #f2f2f2;
+  --text: #1a1a1a; --text-2: #666666; --border: #7f7f7f; --divider: #d9d9d9;
+  --primary: #0017c1; --primary-hover: #00118f; --primary-active: #000071; --on-primary: #ffffff; --selected: #e8f1fe;
+  --success: #115a36; --warning: #ac3e00; --error: #ce0000;
+  --focus-yellow: #ffd43d; --focus-black: #000000;
+  /* ルート・勾配(地図/グラフ専用) */
+  --route: #0017c1; --route-casing: #ffffff;
+  --g0: #c5d7fb; --g3: #ffc94d; --g6: #ff8a2b; --g9: #d9361e; --g12: #7a0e0e; --gdown: #d9d9d9;
+  --radius: 8px; --sp1: 8px; --sp2: 16px; --sp3: 24px;
+  --sidebar-w: 400px;
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  font-size: 16px; line-height: 1.6; color: var(--text); font-synthesis: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus-black); outline-offset: 2px; box-shadow: 0 0 0 4px var(--focus-yellow); border-radius: var(--radius); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ===== 骨格 ===== */
+.app { position: fixed; inset: 0; display: grid; grid-template-columns: var(--sidebar-w) 1fr; }
+#map { position: relative; z-index: 0; background: #e8ecdf; }
+.sidebar { position: relative; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-right: 1px solid var(--divider); }
+.sb-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--sp2) var(--sp2); }
+
+/* ブランド行 */
+.brand { display: flex; align-items: center; gap: var(--sp1); height: 56px; padding: 0 var(--sp1) 0 var(--sp2); border-bottom: 1px solid var(--divider); flex: none; }
+.brand-mark { width: 32px; height: 32px; border-radius: var(--radius); background: var(--primary); display: grid; place-items: center; flex: none; }
+.brand-mark svg { width: 20px; height: 20px; }
+.brand-name { font-size: 16px; font-weight: 700; letter-spacing: .02em; margin-right: auto; }
+.icon-btn { width: 40px; height: 40px; border: 0; border-radius: var(--radius); background: transparent; display: grid; place-items: center; cursor: pointer; color: var(--text); }
+.icon-btn:hover { background: var(--surface-2); }
+.icon-btn svg { width: 22px; height: 22px; }
+.icon-btn[disabled] { color: #b3b3b3; cursor: default; background: transparent; }
+
+/* 走り方 */
+.controls { padding: var(--sp2) 0 var(--sp1); display: grid; gap: var(--sp1); }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); padding: 4px; gap: 4px; background: var(--surface-2); border-radius: var(--radius); }
+.seg button { height: 40px; border: 0; border-radius: 6px; background: transparent; font-size: 14px; font-weight: 500; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.seg button svg { width: 18px; height: 18px; }
+.seg button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
+.seg button:not([aria-pressed="true"]):hover { background: #e6e6e6; color: var(--text); }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; min-height: 40px; font-size: 14px; }
+.toggle-row small { color: var(--text-2); font-size: 12px; }
+.switch { position: relative; width: 48px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 14px; background: #b3b3b3; transition: background .15s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch input:checked + span { background: var(--primary); }
+.switch input:checked + span::after { transform: translateX(20px); }
+.switch input:focus-visible + span { outline: 2px solid var(--focus-black); outline-offset: 2px; box-shadow: 0 0 0 4px var(--focus-yellow); }
+
+/* ルート名 */
+.route-name { display: flex; align-items: center; gap: 4px; margin: var(--sp1) 0 0; }
+.route-name input { flex: 1; min-width: 0; height: 40px; border: 1px solid transparent; border-radius: var(--radius); padding: 0 var(--sp1); margin-left: calc(-1 * var(--sp1)); font-size: 20px; font-weight: 700; background: transparent; }
+.route-name input:hover { border-color: var(--divider); }
+.route-name input:focus { border-color: var(--border); background: #fff; }
+
+/* ステータス */
+.status { display: flex; align-items: center; gap: var(--sp1); min-height: 24px; font-size: 12px; color: var(--text-2); }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
+.status.busy .dot { background: var(--primary); animation: pulse 1s infinite; }
+.status.warn { color: var(--warning); } .status.warn .dot { background: var(--warning); }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* 数値カード */
+.stats { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: var(--sp1); margin: var(--sp1) 0 var(--sp2); }
+.stat { background: var(--surface-2); border-radius: var(--radius); padding: var(--sp1) 10px; min-width: 0; }
+.stat dt { font-size: 12px; color: var(--text-2); line-height: 1.4; white-space: nowrap; }
+.stat dd { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
+.stat dd small { font-size: 12px; font-weight: 500; margin-left: 2px; color: var(--text-2); }
+.stat.main dd { font-size: 26px; }
+
+/* セクション */
+.section { border-top: 1px solid var(--divider); padding: var(--sp2) 0; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--sp1); }
+.section h2 { font-size: 14px; font-weight: 700; margin: 0; }
+.section-head small { font-size: 12px; color: var(--text-2); }
+
+/* 標高グラフ */
+.chart { position: relative; touch-action: pan-y; user-select: none; }
+.chart svg { display: block; width: 100%; height: 168px; }
+.chart .readout { position: absolute; top: 0; padding: 2px 8px; font-size: 12px; background: var(--text); color: #fff; border-radius: 4px; pointer-events: none; white-space: nowrap; transform: translateX(-50%); visibility: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: var(--sp1); font-size: 12px; color: var(--text-2); }
+.legend i { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
+
+/* リスト */
+.list { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: var(--sp1); min-height: 48px; padding: 0 var(--sp1); margin: 0 calc(-1 * var(--sp1)); border-radius: var(--radius); cursor: pointer; }
+.row:hover { background: var(--surface-2); }
+.row .name { font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { font-size: 12px; color: var(--text-2); }
+.row .val { font-size: 14px; font-weight: 700; text-align: right; }
+.pass-ico { width: 28px; height: 28px; display: grid; place-items: center; }
+.wp-badge { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; margin: 0 2px; }
+.wp-badge.start { background: var(--success); } .wp-badge.goal { background: var(--text); }
+.row .del { width: 32px; height: 32px; }
+.empty { font-size: 14px; color: var(--text-2); margin: 0; }
+details.section > summary { list-style: none; cursor: pointer; }
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary .section-head { margin: 0; }
+details.section[open] > summary .section-head { margin-bottom: var(--sp1); }
+.chev { transition: transform .15s; }
+details[open] .chev { transform: rotate(180deg); }
+.note { font-size: 12px; color: var(--text-2); margin: 0; }
+
+/* フッター */
+.sb-foot { flex: none; display: grid; grid-template-columns: 1fr auto; gap: var(--sp1); padding: var(--sp1) var(--sp2) calc(var(--sp1) + env(safe-area-inset-bottom)); border-top: 1px solid var(--divider); background: var(--surface); }
+.btn { height: 48px; padding: 0 var(--sp2); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); font-size: 16px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp1); color: var(--primary); }
+.btn svg { width: 20px; height: 20px; }
+.btn:hover { background: var(--selected); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.btn.primary:hover { background: var(--primary-hover); }
+
+/* ===== 地図上のUI ===== */
+.map-ui { position: absolute; z-index: 500; pointer-events: none; }
+.map-ui > * { pointer-events: auto; }
+.fab-col { top: var(--sp2); right: var(--sp2); display: grid; gap: var(--sp1); }
+.fab { width: 44px; height: 44px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); display: grid; place-items: center; cursor: pointer; color: var(--text); }
+.fab:hover { background: var(--surface-2); }
+.fab svg { width: 22px; height: 22px; }
+.fab-group { display: grid; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.fab-group .fab { border: 0; border-radius: 0; }
+.fab-group .fab + .fab { border-top: 1px solid var(--divider); }
+.edit-bar { left: 50%; transform: translateX(-50%); bottom: var(--sp3); display: flex; gap: 2px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.edit-bar button { height: 40px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.edit-bar button:hover { background: var(--surface-2); }
+.edit-bar button svg { width: 18px; height: 18px; }
+.edit-bar .sep { width: 1px; background: var(--divider); margin: 6px 2px; }
+.hint-chip { left: 50%; transform: translateX(-50%); top: var(--sp2); padding: 6px 12px; font-size: 13px; background: var(--text); color: #fff; border-radius: var(--radius); white-space: nowrap; }
+
+/* レイヤー選択 */
+.layer-pop { position: absolute; top: 0; right: 52px; width: 248px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp1); display: none; }
+.layer-pop.open { display: block; }
+.layer-pop h3 { font-size: 12px; color: var(--text-2); font-weight: 500; margin: 4px 8px; }
+.layer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: var(--sp1); }
+.layer-grid button { border: 2px solid transparent; border-radius: var(--radius); background: transparent; padding: 4px; font-size: 12px; cursor: pointer; display: grid; gap: 2px; justify-items: center; }
+.layer-grid button span.thumb { width: 56px; height: 40px; border-radius: 6px; border: 1px solid var(--divider); background-size: cover; background-position: center; }
+.layer-grid button[aria-pressed="true"] { border-color: var(--primary); background: var(--selected); font-weight: 700; }
+.layer-grid button:disabled { opacity: .4; cursor: default; }
+
+/* 地図マーカー */
+.wp-marker { width: 28px; height: 28px; border-radius: 50%; background: var(--primary); color: #fff; border: 3px solid #fff; display: grid; place-items: center; font: 700 12px/1 "Noto Sans JP", sans-serif; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.wp-marker.start { background: var(--success); } .wp-marker.goal { background: var(--text); }
+.pass-label { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px 2px 4px; background: #fff; border: 1.5px solid var(--text); border-radius: 6px; font: 700 13px/1.5 "Noto Sans JP", sans-serif; white-space: nowrap; color: var(--text); transform: translate(-50%, calc(-100% - 10px)); width: max-content; }
+.pass-label b { font-weight: 500; font-size: 12px; color: var(--text-2); }
+.pass-label::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px; background: #fff; border-right: 1.5px solid var(--text); border-bottom: 1.5px solid var(--text); transform: translateX(-50%) rotate(45deg); }
+.cursor-dot { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 4px solid var(--g6); box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.leaflet-container { font-family: inherit; }
+.leaflet-control-attribution { font-size: 10px; max-width: 70vw; }
+.leaflet-control-scale-line { border-color: var(--text); font-size: 11px; }
+
+/* ===== スマホ ===== */
+.m-only { display: none !important; }
+@media (max-width: 767px) {
+  .d-only { display: none !important; }
+  .m-only { display: revert !important; }
+  .app { grid-template-columns: 1fr; }
+  #map { position: absolute; inset: 0; }
+  .sidebar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--sheet-h, 168px); border-right: 0; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; transition: height .2s ease; }
+  .sheet-grip { flex: none; height: 24px; display: grid; place-items: center; cursor: grab; touch-action: none; border: 0; background: transparent; width: 100%; }
+  .sheet-grip::before { content: ""; width: 40px; height: 4px; border-radius: 2px; background: var(--border); }
+  .brand { display: none; }
+  .sb-scroll { padding-top: 0; }
+  .controls, .route-name { display: none; }
+  .stats { grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 0 0 var(--sp1); }
+  .stat { padding: 6px 8px; } .stat dd, .stat.main dd { font-size: 18px; }
+  .stat dd small { font-size: 11px; }
+  .peek-row { display: flex !important; align-items: center; gap: var(--sp1); margin-bottom: 4px; }
+  .peek-row .route-title { font-size: 16px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .peek-row .btn { height: 40px; font-size: 14px; padding: 0 12px; }
+  .sb-foot { display: none; }
+  .m-top { top: calc(var(--sp1) + env(safe-area-inset-top)); left: var(--sp1); right: var(--sp1); display: flex !important; gap: var(--sp1); align-items: center; }
+  .m-top .seg { flex: 1; background: var(--surface); border: 1px solid var(--border); }
+  .m-top .seg button { height: 36px; font-size: 13px; }
+  .m-top .fab { flex: none; }
+  .fab-col { top: calc(64px + env(safe-area-inset-top)); right: var(--sp1); }
+  .fab-col .zoom { display: none; }
+  .edit-bar { display: none; }
+  .m-tools { right: var(--sp1); bottom: calc(var(--sheet-h, 168px) + var(--sp1)); display: grid !important; gap: var(--sp1); transition: bottom .2s ease; }
+  .hint-chip { top: calc(64px + env(safe-area-inset-top)); font-size: 12px; }
+  .layer-pop { right: 52px; width: min(248px, calc(100vw - 80px)); }
+  .leaflet-bottom.leaflet-left { bottom: calc(var(--sheet-h, 168px) + 4px); transition: bottom .2s ease; }
+  .leaflet-bottom.leaflet-right { bottom: calc(var(--sheet-h, 168px)); }
+  .menu-pop { position: absolute; top: 52px; right: 0; width: 200px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; display: none; }
+  .menu-pop.open { display: block; }
+  .menu-pop button { width: 100%; height: 44px; border: 0; background: transparent; border-radius: 6px; text-align: left; padding: 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .menu-pop button:hover { background: var(--surface-2); }
+  .menu-pop button svg { width: 18px; height: 18px; }
+  .menu-pop hr { border: 0; border-top: 1px solid var(--divider); margin: 4px 0; }
+  .menu-pop .follow { justify-content: space-between; }
+}
+.peek-row { display: none; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></symbol>
+    <symbol id="i-locate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-mtb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 19 6-9 4 5 3-4 5 8Z"/></symbol>
+    <symbol id="i-gravel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19c3-6 6-10 8-14M20 19c-3-6-6-10-8-14"/><circle cx="9" cy="16" r="1" fill="currentColor"/><circle cx="14" cy="13" r="1" fill="currentColor"/><circle cx="13" cy="18" r="1" fill="currentColor"/></symbol>
+    <symbol id="i-road" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 20 10 4M17 20 14 4M12 8v2M12 14v3"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="M8.4 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <aside class="sidebar" id="sheet" aria-label="ルート情報">
+    <button class="sheet-grip m-only" id="grip" aria-label="ルート情報を広げる" aria-expanded="false"></button>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg><use href="#i-route"/></svg></div>
+      <span class="brand-name">ルートビルダー</span>
+      <button class="icon-btn" title="GPXを読み込む" aria-label="GPXを読み込む"><svg><use href="#i-upload"/></svg></button>
+      <button class="icon-btn" title="共有URLをコピー" aria-label="共有URLをコピー"><svg><use href="#i-share"/></svg></button>
+      <button class="icon-btn" title="その他" aria-label="その他"><svg><use href="#i-more"/></svg></button>
+    </div>
+    <div class="sb-scroll">
+      <div class="controls">
+        <div class="seg" role="group" aria-label="走り方" data-seg>
+          <button aria-pressed="true"><svg><use href="#i-mtb"/></svg>山サイ</button>
+          <button aria-pressed="false"><svg><use href="#i-gravel"/></svg>グラベル</button>
+          <button aria-pressed="false"><svg><use href="#i-road"/></svg>ロード</button>
+        </div>
+        <label class="toggle-row"><span>道に沿う <small>OFFで直線</small></span><span class="switch"><input type="checkbox" checked aria-label="道に沿う"><span></span></span></label>
+      </div>
+      <div class="route-name"><input value="花脊峠 周回" aria-label="ルート名"></div>
+
+      <div class="peek-row">
+        <span class="route-title">花脊峠 周回</span>
+        <button class="btn primary"><svg><use href="#i-download"/></svg>GPX</button>
+      </div>
+      <div class="status" id="status"><span class="dot"></span><span>ルート更新済み · 標高 地理院5m</span></div>
+      <dl class="stats">
+        <div class="stat main"><dt>距離</dt><dd class="num" id="s-dist">—<small>km</small></dd></div>
+        <div class="stat"><dt>登り</dt><dd class="num" id="s-up">—<small>m</small></dd></div>
+        <div class="stat"><dt>下り</dt><dd class="num" id="s-down">—<small>m</small></dd></div>
+        <div class="stat"><dt>最高点</dt><dd class="num" id="s-max">—<small>m</small></dd></div>
+      </dl>
+
+      <section class="section" aria-labelledby="h-elev">
+        <div class="section-head"><h2 id="h-elev">標高</h2><small>なぞると地図に位置を表示</small></div>
+        <div class="chart" id="chart"><svg id="chart-svg" role="img" aria-label="標高プロファイル"></svg><div class="readout num" id="readout"></div></div>
+        <div class="legend" aria-label="勾配の凡例">
+          <span><i style="background:var(--g0)"></i>〜3%</span><span><i style="background:var(--g3)"></i>3〜6%</span><span><i style="background:var(--g6)"></i>6〜9%</span><span><i style="background:var(--g9)"></i>9〜12%</span><span><i style="background:var(--g12)"></i>12%〜</span><span><i style="background:var(--gdown)"></i>下り</span>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="h-pass">
+        <div class="section-head"><h2 id="h-pass">通過する峠・山</h2><small>OSM登録地物</small></div>
+        <ul class="list" id="pass-list"></ul>
+      </section>
+
+      <details class="section">
+        <summary><div class="section-head"><h2>経由点 <span class="num" id="wp-count">3</span></h2><svg class="chev" width="18" height="18"><use href="#i-chev"/></svg></div></summary>
+        <ul class="list" id="wp-list"></ul>
+      </details>
+
+      <section class="section">
+        <p class="note">経路は通行可能性を保証しません。現地の規制・通行状況を確認してください。<br>ルート: BRouter / 地物: © OpenStreetMap contributors / 標高: 地理院タイル</p>
+      </section>
+    </div>
+    <div class="sb-foot">
+      <button class="btn primary"><svg><use href="#i-download"/></svg>GPXで保存</button>
+      <button class="btn" title="共有URL"><svg><use href="#i-share"/></svg>共有</button>
+    </div>
+  </aside>
+
+  <div id="map" aria-label="ルート作成地図">
+    <!-- スマホ上部バー -->
+    <div class="map-ui m-top m-only" style="display:none">
+      <div class="seg" role="group" aria-label="走り方" data-seg>
+        <button aria-pressed="true">山サイ</button><button aria-pressed="false">グラベル</button><button aria-pressed="false">ロード</button>
+      </div>
+      <div style="position:relative">
+        <button class="fab" id="menu-btn" aria-label="メニュー" aria-expanded="false"><svg><use href="#i-more"/></svg></button>
+        <div class="menu-pop" id="menu-pop">
+          <label class="follow" style="display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 12px;font-size:14px">道に沿う<span class="switch"><input type="checkbox" checked aria-label="道に沿う"><span></span></span></label>
+          <hr>
+          <button><svg><use href="#i-upload"/></svg>GPXを読み込む</button>
+          <button><svg><use href="#i-share"/></svg>共有URLをコピー</button>
+          <hr>
+          <button style="color:var(--error)"><svg><use href="#i-trash"/></svg>ルートを全消去</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="map-ui hint-chip d-only">地図をクリックで経由点を追加 · ルート上をドラッグで経由点を挿入</div>
+
+    <div class="map-ui fab-col">
+      <div style="position:relative">
+        <button class="fab" id="layer-btn" aria-label="背景地図を選ぶ" aria-expanded="false"><svg><use href="#i-layers"/></svg></button>
+        <div class="layer-pop" id="layer-pop" role="dialog" aria-label="背景地図">
+          <h3>地理院</h3>
+          <div class="layer-grid" data-layers>
+            <button aria-pressed="true" data-l="pale"><span class="thumb" style="background-image:url(https://cyberjapandata.gsi.go.jp/xyz/pale/12/3589/1612.png)"></span>淡色</button>
+            <button aria-pressed="false" data-l="std"><span class="thumb" style="background-image:url(https://cyberjapandata.gsi.go.jp/xyz/std/12/3589/1612.png)"></span>標準</button>
+            <button aria-pressed="false" data-l="photo"><span class="thumb" style="background-image:url(https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/12/3589/1612.jpg)"></span>写真</button>
+            <button aria-pressed="false" data-l="relief"><span class="thumb" style="background-image:url(https://cyberjapandata.gsi.go.jp/xyz/hillshademap/12/3589/1612.png)"></span>陰影</button>
+            <button aria-pressed="false" data-l="osm"><span class="thumb" style="background-image:url(https://tile.openstreetmap.org/12/3589/1612.png)"></span>OSM</button>
+          </div>
+          <h3>Google(APIキー設定時)</h3>
+          <div class="layer-grid">
+            <button disabled><span class="thumb" style="background:#e8eaed"></span>道路</button>
+            <button disabled><span class="thumb" style="background:#cfd8c4"></span>地形</button>
+            <button disabled><span class="thumb" style="background:#3b4a3a"></span>航空</button>
+          </div>
+        </div>
+      </div>
+      <div class="fab-group zoom">
+        <button class="fab" id="zin" aria-label="拡大"><svg><use href="#i-plus"/></svg></button>
+        <button class="fab" id="zout" aria-label="縮小"><svg><use href="#i-minus"/></svg></button>
+      </div>
+      <button class="fab" aria-label="現在地"><svg><use href="#i-locate"/></svg></button>
+    </div>
+
+    <div class="map-ui edit-bar d-only" role="toolbar" aria-label="編集">
+      <button><svg><use href="#i-undo"/></svg>元に戻す</button>
+      <button id="fit-d"><svg><use href="#i-fit"/></svg>全体表示</button>
+      <span class="sep"></span>
+      <button style="color:var(--error)"><svg><use href="#i-trash"/></svg>全消去</button>
+    </div>
+
+    <div class="map-ui m-tools m-only" style="display:none">
+      <button class="fab" aria-label="元に戻す"><svg><use href="#i-undo"/></svg></button>
+      <button class="fab" id="fit-m" aria-label="全体表示"><svg><use href="#i-fit"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="sample-route.js"></script>
+<script>
+// ===== モック用ロジック(実装の参考。データはBRouter fastbike の実ルート、標高はSRTM) =====
+const R = window.SAMPLE_ROUTE; // [lat,lng,ele]
+const mobile = matchMedia('(max-width: 767px)');
+const hav = (a, b) => { const r = 6371000, t = Math.PI / 180, dLa = (b[0]-a[0])*t, dLo = (b[1]-a[1])*t; const h = Math.sin(dLa/2)**2 + Math.cos(a[0]*t)*Math.cos(b[0]*t)*Math.sin(dLo/2)**2; return 2*r*Math.asin(Math.sqrt(h)); };
+const dist = [0]; for (let i = 1; i < R.length; i++) dist.push(dist[i-1] + hav(R[i-1], R[i]));
+const total = dist.at(-1);
+// 獲得標高(ヒステリシス5m)
+let up = 0, down = 0, ref = R[0][2];
+for (const p of R) { const d = p[2] - ref; if (d >= 5) { up += d; ref = p[2]; } else if (d <= -5) { down -= d; ref = p[2]; } }
+const maxE = Math.max(...R.map(p => p[2]));
+const setStat = (id, v, u) => document.getElementById(id).innerHTML = `${v}<small>${u}</small>`;
+setStat('s-dist', (total/1000).toFixed(1), 'km'); setStat('s-up', Math.round(up).toLocaleString(), 'm'); setStat('s-down', Math.round(down).toLocaleString(), 'm'); setStat('s-max', maxE, 'm');
+
+// 地図
+const map = L.map('map', { zoomControl: false, attributionControl: true, fadeAnimation: false }).setView([35.155, 135.78], 13);
+const GSI = '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>';
+const layers = {
+  pale: L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', { maxZoom: 19, maxNativeZoom: 18, attribution: GSI }),
+  std: L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', { maxZoom: 19, maxNativeZoom: 18, attribution: GSI }),
+  photo: L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', { maxZoom: 19, maxNativeZoom: 18, attribution: GSI }),
+  relief: L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png', { maxZoom: 19, maxNativeZoom: 16, attribution: GSI }),
+  osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }),
+};
+let current = layers.pale.addTo(map);
+L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+const ll = R.map(p => [p[0], p[1]]);
+L.polyline(ll, { color: '#ffffff', weight: 11, opacity: 1, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+const routeLine = L.polyline(ll, { color: getComputedStyle(document.documentElement).getPropertyValue('--route').trim(), weight: 6, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+// 経由点
+const wps = [{ i: 0, label: 'S', cls: 'start' }, { i: R.findIndex((p, k) => hav(p, [35.158743, 135.786125]) < 60), label: '2', cls: '' }, { i: R.length - 1, label: 'G', cls: 'goal' }];
+wps.forEach(w => L.marker(ll[w.i], { draggable: true, icon: L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], html: `<div class="wp-marker ${w.cls}">${w.label}</div>` }) }).addTo(map));
+// 峠(OSM: 花脊峠 35.158743,135.786125)
+const passes = [{ name: '花脊峠', lat: 35.158743, lng: 135.786125, ele: 759 }];
+passes.forEach(p => {
+  let bi = 0, bd = Infinity; R.forEach((q, i) => { const d = hav(q, [p.lat, p.lng]); if (d < bd) { bd = d; bi = i; } }); p.km = dist[bi] / 1000;
+  L.marker([p.lat, p.lng], { interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="pass-label"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 2 13 12H1Z" fill="#1a1a1a"/></svg>${p.name}<b class="num">${p.ele}m</b></div>` }) }).addTo(map);
+});
+document.getElementById('pass-list').innerHTML = passes.map(p => `<li class="row" tabindex="0"><span class="pass-ico"><svg width="18" height="18" viewBox="0 0 14 14"><path d="M7 2 13 12H1Z" fill="#1a1a1a"/></svg></span><span><span class="name">${p.name}</span><br><span class="sub num">${p.km.toFixed(1)} km地点 · ルートから12m</span></span><span class="val num">${p.ele} m</span></li>`).join('');
+document.getElementById('wp-list').innerHTML = wps.map((w, n) => `<li class="row"><span class="wp-badge ${w.cls}">${w.label}</span><span><span class="name">${n === 0 ? 'スタート' : n === wps.length - 1 ? 'ゴール' : '経由点'}</span><br><span class="sub num">${(dist[w.i]/1000).toFixed(1)} km · 標高 ${R[w.i][2]} m</span></span><button class="icon-btn del" aria-label="削除"><svg width="18" height="18"><use href="#i-x"/></svg></button></li>`).join('');
+
+const fit = () => map.fitBounds(routeLine.getBounds(), { paddingTopLeft: mobile.matches ? [16, 72] : [24, 72], paddingBottomRight: mobile.matches ? [64, (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sheet-h')) || 168) + 16] : [72, 88] });
+map.invalidateSize(); fit();
+document.getElementById('fit-d').onclick = fit; document.getElementById('fit-m').onclick = fit;
+document.getElementById('zin').onclick = () => map.zoomIn(); document.getElementById('zout').onclick = () => map.zoomOut();
+
+// レイヤー選択
+const lb = document.getElementById('layer-btn'), lp = document.getElementById('layer-pop');
+lb.onclick = () => { const o = lp.classList.toggle('open'); lb.setAttribute('aria-expanded', o); };
+document.querySelectorAll('[data-layers] button').forEach(b => b.onclick = () => {
+  map.removeLayer(current); current = layers[b.dataset.l].addTo(map); current.bringToBack();
+  document.querySelectorAll('[data-layers] button').forEach(x => x.setAttribute('aria-pressed', x === b));
+});
+// セグメント
+document.querySelectorAll('[data-seg]').forEach(seg => seg.querySelectorAll('button').forEach((b, i) => b.onclick = () => {
+  document.querySelectorAll('[data-seg]').forEach(s => s.querySelectorAll('button').forEach((x, j) => x.setAttribute('aria-pressed', j === i)));
+  const st = document.getElementById('status'); st.className = 'status busy'; st.lastElementChild.textContent = 'ルートを計算中…';
+  setTimeout(() => { st.className = 'status'; st.lastElementChild.textContent = 'ルート更新済み · 標高 地理院5m'; }, 900);
+}));
+// スマホメニュー
+const mb = document.getElementById('menu-btn'), mp = document.getElementById('menu-pop');
+mb.onclick = () => { const o = mp.classList.toggle('open'); mb.setAttribute('aria-expanded', o); };
+
+// ボトムシート(3段: peek / half / full)
+const sheet = document.getElementById('sheet'), grip = document.getElementById('grip');
+const snaps = () => [168, Math.round(innerHeight * 0.5), Math.round(innerHeight * 0.88)];
+let snap = 0, dragY = null, startH = 0, moved = false;
+const setH = h => { document.documentElement.style.setProperty('--sheet-h', h + 'px'); };
+const toSnap = i => { snap = i; setH(snaps()[i]); grip.setAttribute('aria-expanded', i > 0); };
+toSnap(0);
+grip.onpointerdown = e => { dragY = e.clientY; startH = sheet.getBoundingClientRect().height; moved = false; grip.setPointerCapture(e.pointerId); sheet.style.transition = 'none'; };
+grip.onpointermove = e => { if (dragY === null) return; const d = dragY - e.clientY; if (Math.abs(d) > 6) moved = true; if (moved) setH(Math.max(120, Math.min(snaps()[2], startH + d))); };
+grip.onpointerup = e => { if (dragY === null) return; sheet.style.transition = ''; const h = sheet.getBoundingClientRect().height; dragY = null;
+  if (!moved) { toSnap((snap + 1) % 3); return; }
+  const s = snaps(); let best = 0; s.forEach((v, i) => { if (Math.abs(v - h) < Math.abs(s[best] - h)) best = i; }); toSnap(best); };
+addEventListener('resize', () => toSnap(snap));
+
+// 標高グラフ(勾配で塗り分け)
+const svg = document.getElementById('chart-svg'), readout = document.getElementById('readout');
+const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
+function drawChart() {
+  const W = svg.clientWidth || 360, H = 168, padL = 36, padR = 8, padT = 22, padB = 22;
+  const lo = Math.floor(Math.min(...R.map(p => p[2])) / 100) * 100, hi = Math.ceil(maxE / 100) * 100;
+  const x = d => padL + d / total * (W - padL - padR), y = e => padT + (1 - (e - lo) / (hi - lo)) * (H - padT - padB);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const gc = g => g < 0 ? css('--gdown') : g < 3 ? css('--g0') : g < 6 ? css('--g3') : g < 9 ? css('--g6') : g < 12 ? css('--g9') : css('--g12');
+  let s = '';
+  for (let e = lo; e <= hi; e += 100) s += `<line x1="${padL}" x2="${W - padR}" y1="${y(e)}" y2="${y(e)}" stroke="#e6e6e6"/><text x="${padL - 6}" y="${y(e) + 4}" text-anchor="end" font-size="11" fill="#666">${e}</text>`;
+  for (let k = 0; k <= total / 1000; k += 5) s += `<text x="${x(k * 1000)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#666">${k}${k === 0 ? '' : ''}</text>`;
+  s += `<text x="${W - padR}" y="${H - 6}" text-anchor="end" font-size="11" fill="#666">km</text>`;
+  // 500m区間ごとに勾配色の台形
+  const step = 500; let i0 = 0;
+  for (let k = step; k <= total + step; k += step) {
+    let i1 = dist.findIndex(d => d >= Math.min(k, total)); if (i1 < 0) i1 = R.length - 1; if (i1 <= i0) continue;
+    const g = (R[i1][2] - R[i0][2]) / Math.max(1, dist[i1] - dist[i0]) * 100;
+    let pts = `${x(dist[i0])},${y(lo)} `; for (let i = i0; i <= i1; i++) pts += `${x(dist[i]).toFixed(1)},${y(R[i][2]).toFixed(1)} `; pts += `${x(dist[i1])},${y(lo)}`;
+    s += `<polygon points="${pts}" fill="${gc(g)}"/>`; i0 = i1;
+  }
+  s += `<polyline points="${R.map((p, i) => `${x(dist[i]).toFixed(1)},${y(p[2]).toFixed(1)}`).join(' ')}" fill="none" stroke="#1a1a1a" stroke-width="1.5" stroke-linejoin="round"/>`;
+  passes.forEach(p => { const px = x(p.km * 1000); s += `<line x1="${px}" x2="${px}" y1="14" y2="${H - padB}" stroke="#1a1a1a" stroke-dasharray="2 3"/><path d="M${px - 5} 14 L${px + 5} 14 L${px} 20Z" fill="#1a1a1a"/><text x="${px}" y="10" text-anchor="middle" font-size="11" font-weight="700" fill="#1a1a1a">${p.name}</text>`; });
+  s += `<line id="cx" x1="0" x2="0" y1="${padT}" y2="${H - padB}" stroke="#1a1a1a" visibility="hidden"/><circle id="cy" r="4" fill="#fff" stroke="#1a1a1a" stroke-width="2" visibility="hidden"/>`;
+  svg.innerHTML = s;
+  const cx = svg.querySelector('#cx'), cy = svg.querySelector('#cy');
+  svg.onpointermove = e => {
+    const r = svg.getBoundingClientRect(); const d = Math.max(0, Math.min(total, (e.clientX - r.left - padL) / (W - padL - padR) * total));
+    const i = Math.max(1, dist.findIndex(v => v >= d)); const j = Math.min(R.length - 1, dist.findIndex(v => v >= d + 100)); const g = (R[j][2] - R[i][2]) / Math.max(1, dist[j] - dist[i]) * 100;
+    const px = x(dist[i]); cx.setAttribute('x1', px); cx.setAttribute('x2', px); cx.setAttribute('visibility', 'visible'); cy.setAttribute('cx', px); cy.setAttribute('cy', y(R[i][2])); cy.setAttribute('visibility', 'visible');
+    readout.style.left = Math.max(60, Math.min(W - 60, px)) + 'px'; readout.style.visibility = 'visible';
+    readout.textContent = `${(dist[i] / 1000).toFixed(1)} km · ${R[i][2]} m · ${g >= 0 ? '+' : ''}${g.toFixed(1)}%`;
+    cursor.setLatLng(ll[i]).addTo(map);
+  };
+  svg.onpointerleave = () => { cx.setAttribute('visibility', 'hidden'); cy.setAttribute('visibility', 'hidden'); readout.style.visibility = 'hidden'; cursor.remove(); };
+}
+drawChart(); new ResizeObserver(drawChart).observe(svg);
+mobile.addEventListener('change', () => { map.invalidateSize(); fit(); });
+</script>
+</body>
+</html>
