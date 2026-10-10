@@ -30,7 +30,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <button id="panel-toggle" aria-controls="panel-content" aria-expanded="false"><span class="grip"></span><span>ルート情報</span><strong id="peek-summary">0.00 km</strong></button><div id="panel-content">
     <h2 class="panel-title">ルートを描く</h2><p class="hint">地図をタップして追加。経由点はドラッグで移動、選択して削除できます。</p>
     <label>ルート名 <input id="route-name" maxlength="200" value="新しいルート"></label>
-    <p id="storage-status" role="status"></p><input id="share-url" aria-label="共有URL" readonly hidden>
+    <p id="storage-status" role="status"></p><p id="map-status" role="status"></p><input id="share-url" aria-label="共有URL" readonly hidden>
     <div id="notice" role="status" aria-live="polite"></div><p class="distance-label">ルート距離</p><p id="summary">0.00 km</p>
     <p id="elevation-status" role="status"></p><div id="stats"></div><h2>標高プロファイル</h2><div id="chart"></div>
     <small>標高: 地理院タイル / 登降は5mヒステリシスによる概算</small>
@@ -40,7 +40,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <small>ルート・地物: BRouter / ${OSM_ATTRIBUTION}</small>
   </div></aside></main>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const map = createMap('map');
+const map = createMap('map', message => { $('map-status').textContent = message; });
 installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
 new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 const markers = L.layerGroup().addTo(map);

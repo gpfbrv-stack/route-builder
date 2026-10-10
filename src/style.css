@@ -13,7 +13,8 @@ button, select, input { font: inherit; }
 button, select { min-height: 40px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--primary); cursor: pointer; font-size: 14px; }
 button:hover:not(:disabled) { background: #e8f1fe; }
 button:disabled { color: #666; cursor: default; background: #f2f2f2; border-color: #ccc; }
-input:not([type=checkbox]):not([type=range]) { min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; width: 100%; }
+input:not([type=checkbox]):not([type=radio]):not([type=range]) { min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; width: 100%; }
+input[type=radio] { accent-color: var(--primary); }
 input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); vertical-align: middle; }
 #toolbar { flex: none; min-height: 64px; padding: 8px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff; border-bottom: 1px solid var(--border); }
 #toolbar label { font-size: 14px; margin-right: 8px; white-space: nowrap; }
@@ -54,6 +55,9 @@ small { font-size: 12px; color: #666; }
 .leaflet-tooltip { font-family: inherit; border: 1px solid #7f7f7f; box-shadow: none; border-radius: 8px; }
 .leaflet-control-attribution { max-width: min(500px, 75vw); font-size: 10px; overflow-wrap: anywhere; }
 .leaflet-control-layers { border-radius: 8px !important; box-shadow: none; }
+.google-logo { padding: 10px 10px 5px; margin: 0 0 0 8px !important; }
+.google-logo img { height: 18px; width: auto; display: block; }
+#map-status { font-size: 12px; color: #666; } #map-status:empty { display: none; }
 .leaflet-control-layers-toggle { width: 40px !important; height: 40px !important; }
 .leaflet-touch .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; }
 :focus-visible { outline: 3px solid #000 !important; outline-offset: 2px; box-shadow: 0 0 0 2px #ffd43d !important; }

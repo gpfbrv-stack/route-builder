@@ -16,6 +16,7 @@ Node.js 22.12以上（開発時24）で `npm install` → `npm run dev`。
 - T4: 峠・山の取得と表示
 - T5: GPX・自動保存・共有
 - T6: PC/スマホUI、実ブラウザ検証
+- T7: Google Map Tiles API（キー設定時のみ）
 
 各段階でテストとビルドを通してから、1タスク1コミット。
 
@@ -55,3 +56,47 @@ GPXは20MB・100,000点以内・単一の連続トラック（またはrte）に
 - `main.ts`, `state.ts`: 状態・画面連携
 
 POI追加は地物プロバイダー、FIT追加はGPXと同じ出力境界へ拡張できます。バックエンド・分析送信・Service Workerはありません。
+
+## Google背景地図の設定
+
+キー未設定でもすべての基本機能が動作し、Google選択肢・Google通信は発生しません。
+
+1. Google CloudでMap Tiles APIを有効化したブラウザ用APIキーを用意します。
+2. `.env.example` を `.env.local` にコピーし、`VITE_GOOGLE_MAPS_API_KEY=` の右側にキーを入力します。
+3. `npm run dev` を再起動します。本番は `npm run build` を再実行します。
+4. レイヤー選択に「Google 道路／航空写真／地形」が現れます。
+
+Viteの `VITE_` 変数はブラウザ配信コードに含まれます。サーバー秘密鍵として隠せる仕組みではありません。Google Cloud側でHTTPリファラーとMap Tiles APIにキーを制限し、利用枠・課金を管理してください。`.env.local` と `dist/` はGit対象外です。キーを含むネットワークログもコミットしないでください。
+
+設定は `src/google.ts` の `GOOGLE` に集約。既定は `scaleFactor2x` / `highDpi:true`。1xにする場合は `scaleFactor1x` / `highDpi:false` に変更。APIが512px画像を返しても地理的範囲は同じなので、LeafletのCSSタイルサイズは256pxです。
+
+セッションのみ、キーの識別値・地図種別・DPI設定別にlocalStorageへ保存。expiry（Unix秒）の1時間前に更新します。移動・ズーム後400ms待機してviewportを取得し、copyrightを反映します。失敗時は帰属が不明なGoogle背景を表示せず地理院淡色へ戻します。`maxZoomRects` が複数ある場合は最小上限を採用する保守的実装です。詳細度が混在する広域表示では拡大画像が粗くなる場合があります。
+
+タイルのプリフェッチ・独自の永続キャッシュ・オフライン保存はありません。`keepBuffer:0`、`updateWhenIdle:true`、`updateWhenZooming:false`、`detectRetina:false`。画像キャッシュはブラウザのHTTPキャッシュに従います。
+
+公式仕様との照合（2026-10-10）:
+
+- [セッション](https://developers.google.com/maps/documentation/tile/session_tokens): `POST https://tile.googleapis.com/v1/createSession`。terrainはlayerRoadmapが必須。
+- [2Dタイル](https://developers.google.com/maps/documentation/tile/roadmap): `https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}`。依頼のURL形式と一致。
+- [viewport](https://developers.google.com/maps/documentation/tile/2d-tiles-overview): `https://tile.googleapis.com/tile/v1/viewport`。上限はトップレベルのmaxZoomではなく `maxZoomRects[].maxZoom`。
+- [帰属ポリシー](https://developers.google.com/maps/documentation/tile/policies): 新規実装にはGoogle Mapsロゴを使う指定。公式SVGを無改変で同梱、地図左下に高さ18px、周囲10px（下5px）の余白。スマホパネルに隠れない位置へ移動。第三者ルート情報の出典はパネル内に分離。
+
+### 実キーでの手動確認（未実施）
+
+1. キー設定後、開発者ツールNetworkのログを消去してGoogle道路を選択。createSession→viewport→2dtilesの順で200応答となることを確認。
+2. 航空写真・地形へ切替。terrainのbodyにlayerRoadmapがあり、copyrightが更新され、Google Mapsロゴが見えることを確認。
+3. パン・ズームでviewportを再取得し、上限以上ではタイルURLのzが増えず拡大表示されることを確認。375px画面でもロゴ・copyrightがパネルに隠れないことを確認。
+4. 同じ地図種別へ戻った時に有効なセッションが再利用されることを確認。localStorageのexpiryを現在Unix秒+3599に変更して再読込すると再作成されます。
+5. 地理院へ戻るとGoogleロゴ・copyrightが消え、地理院出典になることを確認。
+
+## 実施済み検証
+
+- Vitest: 距離、点と線の近接・ルート上距離、DEMデコード、ヒステリシス、サンプリング、区間キャッシュと同時数、地物距離フィルター、GPX、共有URL、保存失敗、Googleセッション・bounds。
+- Chromium実ブラウザ: 地図のクリック追加、ドラッグ、実BRouter応答、実DEM、実Overpass、PC表示、375×812で横スクロールなし、パネルのタップ／ドラッグ。
+- ネットワークログ: 4経由点の2番をドラッグしてBRouter追加リクエスト2件、変更のない区間は再取得なし。
+- 花脊峠: OSM node 1368961752（35.158743, 135.786125、ele=760）。例示座標35.1615,135.7590とは約2.5km異なります。登録位置を通る山サイルートで地図・一覧・グラフに花脊峠760m、旧花背峠751mを表示。サンプル最高点759mとの差はDEM標高とOSM登録標高の違いです。
+- GPX: ブラウザで出力→読込→再出力、SHA-256一致。読込後は再計算せず元の形状を表示。
+- Google: キーなしで選択肢なし／通信なし。模擬応答では3種類の切替、ロゴ、copyright、ズーム12のタイルを13以上で拡大、403時の地理院復帰を確認。実キー・実Google画像での検証は未実施。
+- 検証中の修正: ブラウザfetchのthis束縛不具合、テストデータの型エラー、ラジオボタンへの過大な入力欄CSS。Overpassは一度504応答、再編集時の再取得は200応答。
+
+実通信先はBRouter、Overpass、地理院タイル、OSMタイル、キー設定時のみtile.googleapis.com。Googleロゴ・Leaflet画像は同梱、外部フォント通信なし。

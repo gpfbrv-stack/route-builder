@@ -5,3 +5,6 @@ dist/
 output/
 work/
 *.local
+.env
+.env.*
+!.env.example

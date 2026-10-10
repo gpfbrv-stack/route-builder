@@ -1,0 +1,6 @@
+Google Maps logo: official, unmodified attribution asset.
+Source: https://developers.google.com/static/maps/documentation/images/Google_Maps_Attribution_Assets.zip
+Asset: GoogleMaps_Logo_WithLightOutline.svg
+Downloaded: 2026-10-10
+Usage: https://developers.google.com/maps/documentation/tile/policies
+Google Maps is a trademark of Google LLC. This asset is used solely for required map attribution.
