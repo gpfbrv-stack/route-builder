@@ -116,6 +116,32 @@ details.section[open] > summary .section-head { margin-bottom: var(--sp1); }
 details[open] .chev { transform: rotate(180deg); }
 .note { font-size: 12px; color: var(--text-2); margin: 0; }
 
+/* 補給・休憩(第2段階) */
+:root { --poi-conv: #0031d8; --poi-shop: #197a4b; --poi-vend: #6f3fbf; --poi-water: #00749e; --poi-wc: #5c5c5c; --poi-michi: #b84a00; --gap-bg: #fff4e5; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border: 1px solid var(--divider); border-radius: 16px; background: #fff; font-size: 13px; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--text); background: var(--surface-2); font-weight: 500; }
+.chip[aria-pressed="false"] { color: var(--text-2); }
+.chip[aria-pressed="false"] .poi-dot { background: #b3b3b3 !important; }
+.chip .count { font-size: 12px; color: var(--text-2); font-weight: 400; }
+.poi-dot { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: #fff; flex: none; }
+.poi-dot svg, .poi-marker svg { width: 12px; height: 12px; }
+.gap-note { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: var(--radius); background: var(--gap-bg); color: var(--warning); font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.gap-note b { font-weight: 700; }
+.gap-note.ok { background: var(--surface-2); color: var(--text-2); }
+.poi-row .sub .open { color: var(--success); font-weight: 500; }
+.poi-row .val { font-weight: 500; color: var(--text-2); }
+.poi-marker { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; display: grid; place-items: center; color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.poi-marker.small { width: 12px; height: 12px; border-width: 1.5px; }
+.poi-marker.small svg { display: none; }
+.check-row { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 13px; color: var(--text-2); }
+.check-row input { width: 18px; height: 18px; accent-color: var(--primary); }
+.more-btn { width: 100%; height: 40px; border: 0; border-radius: var(--radius); background: transparent; color: var(--primary); font-size: 14px; cursor: pointer; }
+.more-btn:hover { background: var(--selected); }
+.poi-pop { font: 13px/1.6 "Noto Sans JP", sans-serif; min-width: 160px; }
+.poi-pop b { font-size: 14px; display: block; }
+.poi-pop a { color: var(--primary); }
+
 /* フッター */
 .sb-foot { flex: none; display: grid; grid-template-columns: 1fr auto; gap: var(--sp1); padding: var(--sp1) var(--sp2) calc(var(--sp1) + env(safe-area-inset-bottom)); border-top: 1px solid var(--divider); background: var(--surface); }
 .btn { height: 48px; padding: 0 var(--sp2); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); font-size: 16px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp1); color: var(--primary); }
@@ -225,7 +251,13 @@ details[open] .chev { transform: rotate(180deg); }
     <symbol id="i-mtb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 19 6-9 4 5 3-4 5 8Z"/></symbol>
     <symbol id="i-gravel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19c3-6 6-10 8-14M20 19c-3-6-6-10-8-14"/><circle cx="9" cy="16" r="1" fill="currentColor"/><circle cx="14" cy="13" r="1" fill="currentColor"/><circle cx="13" cy="18" r="1" fill="currentColor"/></symbol>
     <symbol id="i-road" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 20 10 4M17 20 14 4M12 8v2M12 14v3"/></symbol>
-    <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="M8.4 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.6"/></symbol>
+    <symbol id="p-conv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 5 4h14l2 6M5 10v10h14V10M3 10h18M10 20v-5h4v5"/></symbol>
+    <symbol id="p-shop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.2 11h11l2-8H6"/><circle cx="9" cy="20" r="1.4" fill="currentColor"/><circle cx="17" cy="20" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="p-vend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"><path d="M10 2h4v3l2 3v14H8V8l2-3Z"/><path d="M8 13h8"/></symbol>
+    <symbol id="p-water" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5C7.8 7.6 6 10.8 6 14a6 6 0 0 0 12 0c0-3.2-1.8-6.4-6-11.5Z"/></symbol>
+    <symbol id="p-wc" viewBox="0 0 24 24" fill="currentColor"><text x="12" y="17" text-anchor="middle" font-size="12" font-weight="700" font-family="sans-serif">WC</text></symbol>
+    <symbol id="p-michi" viewBox="0 0 24 24" fill="currentColor"><text x="12" y="18" text-anchor="middle" font-size="15" font-weight="700" font-family="sans-serif">駅</text></symbol>
+    <symbol id="i-route"viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="M8.4 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.6"/></symbol>
   </defs>
 </svg>
 
@@ -273,6 +305,15 @@ details[open] .chev { transform: rotate(180deg); }
       <section class="section" aria-labelledby="h-pass">
         <div class="section-head"><h2 id="h-pass">通過する峠・山</h2><small>OSM登録地物</small></div>
         <ul class="list" id="pass-list"></ul>
+      </section>
+
+      <section class="section" aria-labelledby="h-poi">
+        <div class="section-head"><h2 id="h-poi">補給・休憩</h2><small>ルート沿い · OSM登録地物</small></div>
+        <div class="chips" role="group" aria-label="表示する種類" id="poi-chips"></div>
+        <div class="gap-note" id="gap-note"></div>
+        <ul class="list" id="poi-list"></ul>
+        <button class="more-btn" id="poi-more" hidden>さらに表示</button>
+        <label class="check-row"><input type="checkbox" checked>表示中の補給・休憩をGPXのウェイポイントに含める</label>
       </section>
 
       <details class="section">
@@ -395,6 +436,51 @@ passes.forEach(p => {
 document.getElementById('pass-list').innerHTML = passes.map(p => `<li class="row" tabindex="0"><span class="pass-ico"><svg width="18" height="18" viewBox="0 0 14 14"><path d="M7 2 13 12H1Z" fill="#1a1a1a"/></svg></span><span><span class="name">${p.name}</span><br><span class="sub num">${p.km.toFixed(1)} km地点 · ルートから12m</span></span><span class="val num">${p.ele} m</span></li>`).join('');
 document.getElementById('wp-list').innerHTML = wps.map((w, n) => `<li class="row"><span class="wp-badge ${w.cls}">${w.label}</span><span><span class="name">${n === 0 ? 'スタート' : n === wps.length - 1 ? 'ゴール' : '経由点'}</span><br><span class="sub num">${(dist[w.i]/1000).toFixed(1)} km · 標高 ${R[w.i][2]} m</span></span><button class="icon-btn del" aria-label="削除"><svg width="18" height="18"><use href="#i-x"/></svg></button></li>`).join('');
 
+
+// ===== 補給・休憩(第2段階モック。位置・名称はサンプル) =====
+const POI_CATS = [
+  { key: 'conv', label: 'コンビニ', color: 'var(--poi-conv)', on: true, supply: true },
+  { key: 'shop', label: '商店', color: 'var(--poi-shop)', on: true, supply: true },
+  { key: 'vend', label: '自販機', color: 'var(--poi-vend)', on: true, supply: false },
+  { key: 'water', label: '水場', color: 'var(--poi-water)', on: true, supply: false },
+  { key: 'wc', label: 'トイレ', color: 'var(--poi-wc)', on: false, supply: false },
+  { key: 'michi', label: '道の駅', color: 'var(--poi-michi)', on: true, supply: true },
+];
+const atKm = km => { const i = Math.max(0, dist.findIndex(d => d >= km * 1000)); return { lat: R[i][0], lng: R[i][1], km: dist[i] / 1000 }; };
+const POIS = [
+  { cat: 'conv', name: 'コンビニ(サンプル)', off: 60, hours: '24時間', ...atKm(0.5) },
+  { cat: 'vend', name: '自販機', off: 15, count: 2, ...atKm(3.1) },
+  { cat: 'water', name: '水場(サンプル)', off: 40, ...atKm(5.6) },
+  { cat: 'vend', name: '自販機', off: 10, count: 1, ...atKm(7.4) },
+  { cat: 'wc', name: 'トイレ(サンプル)', off: 30, ...atKm(7.6) },
+  { cat: 'vend', name: '自販機', off: 20, count: 3, ...atKm(15.2) },
+  { cat: 'shop', name: '商店(サンプル)', off: 90, hours: '8:00–18:00', ...atKm(21.6) },
+];
+const poiOn = Object.fromEntries(POI_CATS.map(c => [c.key, c.on]));
+const catOf = k => POI_CATS.find(c => c.key === k);
+const poiLayer = L.layerGroup().addTo(map);
+const GAP_WARN_KM = 15;
+function supplyGap() {
+  const pts = [0, ...POIS.filter(p => catOf(p.cat).supply && poiOn[p.cat]).map(p => p.km), total / 1000].sort((a, b) => a - b);
+  let best = { from: 0, to: 0 }; for (let i = 1; i < pts.length; i++) if (pts[i] - pts[i - 1] > best.to - best.from) best = { from: pts[i - 1], to: pts[i] };
+  return best;
+}
+function renderPois() {
+  document.getElementById('poi-chips').innerHTML = POI_CATS.map(c => `<button class="chip" aria-pressed="${poiOn[c.key]}" data-cat="${c.key}"><span class="poi-dot" style="background:${c.color}"><svg><use href="#p-${c.key}"/></svg></span>${c.label}<span class="count num">${POIS.filter(p => p.cat === c.key).reduce((n, p) => n + (p.count || 1), 0)}</span></button>`).join('');
+  document.querySelectorAll('#poi-chips .chip').forEach(b => b.onclick = () => { poiOn[b.dataset.cat] = !poiOn[b.dataset.cat]; renderPois(); drawChart(); });
+  const g = supplyGap(), len = g.to - g.from, note = document.getElementById('gap-note');
+  note.className = 'gap-note' + (len >= GAP_WARN_KM ? '' : ' ok');
+  note.innerHTML = `<span aria-hidden="true">${len >= GAP_WARN_KM ? '⚠' : 'ⓘ'}</span><span>補給(コンビニ・商店・道の駅)なしの最長区間 <b class="num">${len.toFixed(1)} km</b><br><span class="num">${g.from.toFixed(1)} → ${g.to.toFixed(1)} km 地点</span></span>`;
+  const shown = POIS.filter(p => poiOn[p.cat]);
+  document.getElementById('poi-list').innerHTML = shown.map(p => { const c = catOf(p.cat); return `<li class="row poi-row" tabindex="0"><span class="poi-dot" style="background:${c.color}"><svg><use href="#p-${c.key}"/></svg></span><span><span class="name">${p.count ? `${c.label} ${p.count}台` : p.name}</span><br><span class="sub num">ルートから${p.off}m${p.hours ? ` · <span class="open">${p.hours}</span>` : ''}</span></span><span class="val num">${p.km.toFixed(1)} km</span></li>`; }).join('') || '<p class="empty">表示する種類を選んでください。</p>';
+  poiLayer.clearLayers();
+  const small = map.getZoom() < 13;
+  shown.forEach(p => { const c = catOf(p.cat);
+    L.marker([p.lat, p.lng], { icon: L.divIcon({ className: '', iconSize: small ? [12, 12] : [22, 22], iconAnchor: small ? [6, 6] : [11, 11], html: `<div class="poi-marker${small ? ' small' : ''}" style="background:${c.color}"><svg><use href="#p-${c.key}"/></svg></div>` }) })
+      .bindPopup(`<div class="poi-pop"><b>${p.count ? `${c.label} ${p.count}台` : p.name}</b>${c.label} · ${p.km.toFixed(1)} km地点 · ルートから${p.off}m${p.hours ? `<br>営業: ${p.hours}` : ''}<br><a href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank" rel="noopener">Googleマップで確認</a></div>`).addTo(poiLayer); });
+}
+renderPois(); map.on('zoomend', renderPois);
+
 const fit = () => map.fitBounds(routeLine.getBounds(), { paddingTopLeft: mobile.matches ? [16, 72] : [24, 72], paddingBottomRight: mobile.matches ? [64, (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sheet-h')) || 168) + 16] : [72, 88] });
 map.invalidateSize(); fit();
 document.getElementById('fit-d').onclick = fit; document.getElementById('fit-m').onclick = fit;
@@ -444,6 +530,9 @@ function drawChart() {
   for (let e = lo; e <= hi; e += 100) s += `<line x1="${padL}" x2="${W - padR}" y1="${y(e)}" y2="${y(e)}" stroke="#e6e6e6"/><text x="${padL - 6}" y="${y(e) + 4}" text-anchor="end" font-size="11" fill="#666">${e}</text>`;
   for (let k = 0; k <= total / 1000; k += 5) s += `<text x="${x(k * 1000)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#666">${k}${k === 0 ? '' : ''}</text>`;
   s += `<text x="${W - padR}" y="${H - 6}" text-anchor="end" font-size="11" fill="#666">km</text>`;
+
+  // 補給の最長空白区間(帯)と補給・休憩の目印(x軸上の点)
+  const gp = supplyGap(); if (gp.to - gp.from >= GAP_WARN_KM) s += `<rect x="${x(gp.from * 1000)}" y="${padT}" width="${x(gp.to * 1000) - x(gp.from * 1000)}" height="${H - padT - padB}" fill="var(--gap-bg)" opacity=".75"/>`;
   // 500m区間ごとに勾配色の台形
   const step = 500; let i0 = 0;
   for (let k = step; k <= total + step; k += step) {
@@ -455,6 +544,7 @@ function drawChart() {
   s += `<polyline points="${R.map((p, i) => `${x(dist[i]).toFixed(1)},${y(p[2]).toFixed(1)}`).join(' ')}" fill="none" stroke="#1a1a1a" stroke-width="1.5" stroke-linejoin="round"/>`;
   passes.forEach(p => { const px = x(p.km * 1000); s += `<line x1="${px}" x2="${px}" y1="14" y2="${H - padB}" stroke="#1a1a1a" stroke-dasharray="2 3"/><path d="M${px - 5} 14 L${px + 5} 14 L${px} 20Z" fill="#1a1a1a"/><text x="${px}" y="10" text-anchor="middle" font-size="11" font-weight="700" fill="#1a1a1a">${p.name}</text>`; });
   s += `<line id="cx" x1="0" x2="0" y1="${padT}" y2="${H - padB}" stroke="#1a1a1a" visibility="hidden"/><circle id="cy" r="4" fill="#fff" stroke="#1a1a1a" stroke-width="2" visibility="hidden"/>`;
+  POIS.filter(p => poiOn[p.cat]).forEach(p => { s += `<circle cx="${x(p.km * 1000)}" cy="${H - padB + 1}" r="4" fill="${catOf(p.cat).color}" stroke="#fff" stroke-width="1.5"/>`; });
   svg.innerHTML = s;
   const cx = svg.querySelector('#cx'), cy = svg.querySelector('#cy');
   svg.onpointermove = e => {
