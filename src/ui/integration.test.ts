@@ -5,7 +5,7 @@ import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0 }));
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
@@ -14,6 +14,8 @@ vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
   return { ...actual, Router: class {
+    detour: InstanceType<typeof actual.Router>['detour'] = async (a, b, profile, mode) => captured.detour && mode === 'road'
+      ? { key: actual.segmentKey(a, b, profile), osmM: 4500, gsiM: 1200 } : undefined;
     cached = () => undefined;
     route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes) => {
       captured.routeCalls++;
@@ -273,4 +275,22 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expectExportsDisabled(true);
   expect(document.querySelector('.chart-gap')).toBeNull();
   expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
+  // Exercise the main.ts wiring, including persistence, one-step Undo and clearing.
+  captured.detour = true;
+  button('.controls [data-mode="road"]').click();
+  for (const lat of [36, 36.01, 36.02]) captured.map!.fire('click', { latlng: { lat, lng: 138 } });
+  await settle();
+  expect(document.querySelectorAll('.detour-leg')).toHaveLength(2);
+  expect(document.querySelector('.detour-notice')!.textContent).toContain('2区間');
+  button('.detour-notice button').click();
+  expect(state().legMode).toEqual(['gsi', 'gsi']);
+  expect(document.querySelector('.detour-leg')).toBeNull();
+  button('#undo').click(); expect(state().legMode).toEqual(['road', 'road']); await settle();
+  expect(document.querySelector('.detour-notice')).toBeNull();
+  captured.map!.fire('click', { latlng: { lat: 36.03, lng: 138 } }); await settle();
+  expect(document.querySelectorAll('.detour-leg')).toHaveLength(1);
+  const name = document.getElementById('route-name') as HTMLInputElement;
+  name.value = 'edited'; name.dispatchEvent(new Event('change'));
+  expect(document.querySelector('.detour-leg')).toBeNull();
+  captured.detour = false;
 });

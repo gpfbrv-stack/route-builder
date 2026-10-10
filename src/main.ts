@@ -31,6 +31,7 @@ import { installRouteDrag } from './ui/route-drag';
 import { RouteLine } from './ui/route-line';
 import { RoutePreview } from './ui/route-preview';
 import { GsiUsage } from './ui/gsi-usage';
+import { DetourSuggestions } from './ui/detours';
 import { installGarminDialog, sendGarminCourse, preloadFit } from './ui/garmin';
 mountUI();
 const showGarminInstructions = installGarminDialog();
@@ -111,6 +112,7 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
 const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: 'road' as const });
+const detours = new DetourSuggestions(router, status, $('waypoints'), () => history.value, change);
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function change(next: RouteState, keepTrack = false) {
@@ -121,6 +123,7 @@ function remove(index: number) { change(removeWaypoint(history.value, index)); }
 const calculate = debounce(async (version: number) => {
   if (version !== revision) return;
   const state = structuredClone(history.value);
+  const detourCurrent = detours.current();
   let points = state.importedTrack ?? state.points;
   let shapes = state.points.slice(1).map((point, i) => [state.points[i], point]);
   if (state.importedTrack) notify('GPXの形状を保持中。経由点の編集・区間の引き直しでルートを再計算します。');
@@ -135,6 +138,7 @@ const calculate = debounce(async (version: number) => {
     const warnings = routingWarnings(segments, state.legProfiles);
     notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
     gsiUsage.update(state.legMode.includes('gsi') || segments.some(segment => segment.gsi));
+    void detours.scan(state, segments, detourCurrent);
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   if (state.importedTrack || !state.legMode.some(mode => mode !== 'straight')) gsiUsage.update(state.legMode.includes('gsi'));
   segmentShapes = state.importedTrack ? [] : shapes;
@@ -176,6 +180,7 @@ function updateWaypointMetrics(track: Point[]) {
   });
 }
 function render() {
+  detours.clear();
   routeDrag.cancel(); livePreview.cancel(); segmentShapes = [];
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
@@ -255,6 +260,7 @@ const routeDrag = installRouteDrag(map, line, () => ({ shapes: routeLine.shapes,
 });
 map.on('click', (event: L.LeafletMouseEvent) => change(insertWaypoint(history.value, history.value.points.length, { lat: event.latlng.lat, lng: event.latlng.lng })));
 $('profile').onchange = () => {
+  detours.clear();
   const profile = $<HTMLSelectElement>('profile').value as Profile;
   history.value = selectProfile(history.value, profile);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === profile)));
@@ -266,6 +272,7 @@ function syncMode(mode: LegMode) {
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
 }
 document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
+  detours.clear();
   const mode = button.dataset.mode as LegMode;
   history.value = { ...history.value, mode };
   syncMode(mode);
@@ -276,6 +283,7 @@ $('undo').onclick = () => { history.undo(); render(); };
 $('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [], legMode: [] });
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
+  detours.clear();
   history.value.name = input.value.trim() || '新しいルート';
   document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(other => other.value = history.value.name);
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');

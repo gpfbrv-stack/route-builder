@@ -210,6 +210,10 @@ button:disabled { opacity: .45; cursor: default; }
 [data-action="clear"] { color: var(--error); }
 
 .status > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status > span:has(.detour-notice) { white-space: normal; overflow: visible; }
+.detour-notice, .detour-leg { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp1); }
+.detour-notice button, .detour-leg button { min-height: 40px; padding: 0 var(--sp1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--primary); cursor: pointer; }
+.detour-leg { grid-column: 2 / -1; font-size: 12px; color: var(--text-2); padding-bottom: var(--sp1); }
 .place-row { width: calc(100% + 16px); border: 0; background: transparent; text-align: left; font: inherit; color: inherit; }
 .row-copy { min-width: 0; text-align: left; }
 .row-copy > span { display: block; }

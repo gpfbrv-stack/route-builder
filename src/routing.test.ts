@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Router, routingWarnings, segmentKey } from './routing';
+import { Router, routingWarnings, segmentKey, isDetour } from './routing';
 import { ProfileRegistry } from './brouter-profiles';
 import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
 import { GsiRouter } from './gsi-router';
-import type { LegMode, RouteState } from './types';
+import type { LegMode, RouteState, Segment } from './types';
+import * as geo from './geo';
 beforeEach(() => { vi.spyOn(GsiRouter.prototype, 'route').mockRejectedValue(new Error('no GSI path')); vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} }); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function testRouter(fetcher?: typeof fetch) {
@@ -15,6 +16,43 @@ function testRouter(fetcher?: typeof fetch) {
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
 const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], mode: 'road' as const });
+it.each([[1500, 500, false], [1500.01, 500, true], [2500, 1000, false], [2500.01, 1000, true]])('detour boundary L=%s D=%s', (length, direct, expected) => {
+  expect(isDetour(length, direct)).toBe(expected);
+});
+const detourSegment = (): Segment => ({ points: [points[0], { lat: 35.02, lng: 135 }, points[1]], fallback: false, profileUsed: 'mtb-jp' });
+it.each([0.5999, 0.6, 0.6001])('suggests only below 60 percent (%s)', async ratio => {
+  const segment = detourSegment();
+  const alternative = points.slice(0, 2);
+  // Fix measured lengths to check strict equality without geodesic rounding.
+  vi.spyOn(geo, 'routeLength').mockReturnValueOnce(4500).mockReturnValueOnce(4500 * ratio);
+  vi.mocked(GsiRouter.prototype.route).mockResolvedValue({ points: alternative, fallback: false });
+  const suggestion = await testRouter(vi.fn()).detour(points[0], points[1], 'mtb', 'road', segment);
+  expect(Boolean(suggestion)).toBe(ratio < 0.6);
+});
+it.each([
+  ['straight', {}], ['gsi', {}], ['road', { fallback: true }], ['road', { gsi: true }],
+  ['road', { gsiRescue: true, gsi: true }], ['road', { profileUsed: undefined }], ['road', { points: points.slice(0, 2) }],
+] as [LegMode, Partial<Segment>][])('compares only successful BRouter detours: %s %s', async (mode, overrides) => {
+  expect(await testRouter(vi.fn()).detour(points[0], points[1], 'mtb', mode, { ...detourSegment(), ...overrides })).toBeUndefined();
+  expect(GsiRouter.prototype.route).not.toHaveBeenCalled();
+});
+it('silently ignores GSI failure and does not alter the OSM cache', async () => {
+  const router = testRouter(vi.fn(async () => response()));
+  const original = await router.segment(points[0], points[1], 'mtb');
+  expect(await router.detour(points[0], points[1], 'mtb', 'road', detourSegment())).toBeUndefined();
+  expect(router.cached(points[0], points[1], 'mtb')).toBe(original);
+});
+it('serializes background comparisons and drops obsolete queued work and results', async () => {
+  let resolve!: (value: Segment) => void, current = true;
+  vi.mocked(GsiRouter.prototype.route).mockImplementation(() => new Promise(done => { resolve = done; }));
+  const router = testRouter(vi.fn());
+  const first = router.detour(points[0], points[1], 'mtb', 'road', detourSegment(), () => current);
+  const second = router.detour(points[1], points[2], 'mtb', 'road', detourSegment(), () => current);
+  await vi.waitFor(() => expect(GsiRouter.prototype.route).toHaveBeenCalledTimes(1));
+  current = false; resolve({ points: points.slice(0, 2), fallback: false });
+  expect(await Promise.all([first, second])).toEqual([undefined, undefined]);
+  expect(GsiRouter.prototype.route).toHaveBeenCalledTimes(1);
+});
 it('inherits profiles on append, insertion, deletion and movement, including endpoints', () => {
   const state = mixedState();
   expect(insertWaypoint(state, 4, points[4]).legProfiles).toEqual(['mtb', 'road', 'gravel', 'gravel']);

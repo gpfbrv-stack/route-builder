@@ -1,6 +1,6 @@
 import { CONFIG, type Profile } from './config';
 import { cacheSet, RequestQueue } from './async';
-import { distance, validPoint } from './geo';
+import { distance, routeLength, validPoint } from './geo';
 import type { LegMode, Point, Segment } from './types';
 import { ProfileRegistry } from './brouter-profiles';
 import { GsiRouter } from './gsi-router';
@@ -9,10 +9,25 @@ export function segmentKey(a: Point, b: Point, profile: Profile, mode: LegMode =
   return `${mode === 'road' ? profile : '-'}:${mode}:${a.lng.toFixed(6)},${a.lat.toFixed(6)}|${b.lng.toFixed(6)},${b.lat.toFixed(6)}`;
 }
 export class Router {
+  private detourQueue = new RequestQueue(1);
   private cache = new Map<string, Segment>();
   private pending = new Map<string, { promise: Promise<Segment>; consumers: (() => boolean)[] }>();
   private queue = new RequestQueue(CONFIG.routing.concurrency);
   constructor(private request: typeof fetch = (...args) => fetch(...args), private registry = new ProfileRegistry(request), private gsi = new GsiRouter(request)) {}
+  async detour(a: Point, b: Point, profile: Profile, mode: LegMode, segment: Segment, current = () => true): Promise<Detour | undefined> {
+    const osmM = routeLength(segment.points);
+    if (mode !== 'road' || segment.fallback || segment.gsi || !segment.profileUsed || !isDetour(osmM, distance(a, b))) return;
+    return this.detourQueue.run(async () => {
+      if (!current()) return;
+      try {
+        const alternative = await this.segment(a, b, profile, 'gsi', current);
+        const gsiM = routeLength(alternative.points);
+        if (current() && !alternative.fallback && gsiM < 0.6 * osmM) {
+          return { osmM, gsiM, key: JSON.stringify([segmentKey(a, b, profile), segment.points, alternative.points]) };
+        }
+      } catch { /* Background comparison must never interrupt routing. */ }
+    });
+  }
   cached(a: Point, b: Point, profile: Profile, mode: LegMode = 'road'): Segment | undefined {
     return this.cache.get(segmentKey(a, b, profile, mode));
   }
@@ -90,6 +105,10 @@ export class Router {
     }));
     return results;
   }
+}
+export interface Detour { key: string; osmM: number; gsiM: number }
+export function isDetour(lengthM: number, directM: number): boolean {
+  return lengthM > Math.max(CONFIG.gsi.detourRatio * directM, directM + CONFIG.gsi.detourExtraM);
 }
 export function routingWarnings(segments: Segment[], profiles: Profile | Profile[]): string[] {
   const warnings: string[] = [];
