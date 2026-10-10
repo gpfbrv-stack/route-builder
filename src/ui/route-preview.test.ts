@@ -7,7 +7,7 @@ import { insertWaypoint } from '../state';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
-const state = (delta = 0): RouteState => ({ name: 'live', profile: 'mtb', followRoad: true, legProfiles: ['road', 'gravel', 'mtb'], legFollow: [true, true, true],
+const state = (delta = 0): RouteState => ({ name: 'live', profile: 'mtb', mode: 'road' as const, legProfiles: ['road', 'gravel', 'mtb'], legMode: ['road', 'road', 'road'],
   points: [{ lat: 35, lng: 135 }, { lat: 35.01 + delta, lng: 135.01 }, { lat: 35.02, lng: 135.02 }, { lat: 35.03, lng: 135.03 }] });
 function setup() {
   const jobs: { current: () => boolean; resolved: (i: number, s: Segment) => void; finish: () => void }[] = [];
@@ -57,7 +57,7 @@ it('uses inherited profiles for insertion, handles endpoints and makes no reques
   live.update(state(), 3); await vi.advanceTimersByTimeAsync(400);
   expect(route.mock.calls[2].slice(0, 2)).toEqual([state().points.slice(2), ['mtb']]);
   jobs[2].finish(); live.cancel();
-  live.update({ ...state(), legFollow: [false, false, false] }, 1); await vi.advanceTimersByTimeAsync(1000);
+  live.update({ ...state(), legMode: ['straight', 'straight', 'straight'] }, 1); await vi.advanceTimersByTimeAsync(1000);
   expect(route).toHaveBeenCalledTimes(3); live.cancel();
 });
 it('shares the real router concurrency limit with normal calculations and caches live results', async () => {
@@ -82,8 +82,21 @@ it('shares the real router concurrency limit with normal calculations and caches
 
 it('routes mixed neighbours with their own follow settings even when the default is off', async () => {
   const { live, route, jobs } = setup();
-  live.update({ ...state(), followRoad: false, legFollow: [false, true, false] }, 1);
+  live.update({ ...state(), mode: 'straight' as const, legMode: ['straight', 'road', 'straight'] }, 1);
   await vi.advanceTimersByTimeAsync(0);
-  expect(route).toHaveBeenCalledOnce(); expect(route.mock.calls[0][4]).toEqual([false, true]);
+  expect(route).toHaveBeenCalledOnce(); expect(route.mock.calls[0][4]).toEqual(['straight', 'road']);
   jobs[0].finish(); live.cancel();
+});
+
+it('throttles GSI live routing, uses the leg mode and retains its stored profile', async () => {
+  const { live, route, jobs, resolved } = setup();
+  const gsiState = (delta = 0): RouteState => ({ ...state(delta), mode: 'straight', legMode: ['gsi', 'straight', 'road'] });
+  live.update(gsiState(), 1); await vi.advanceTimersByTimeAsync(0);
+  expect(route.mock.calls[0][4]).toEqual(['gsi', 'straight']);
+  expect(route.mock.calls[0][1]).toEqual(['road', 'gravel']);
+  jobs[0].resolved(0, { points: state().points, fallback: false, gsi: true }); expect(resolved).toHaveBeenCalledOnce();
+  jobs[0].finish(); live.update(gsiState(0.001), 1);
+  await vi.advanceTimersByTimeAsync(399); expect(route).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1); expect(route).toHaveBeenCalledTimes(2);
+  jobs[1].finish(); live.cancel();
 });

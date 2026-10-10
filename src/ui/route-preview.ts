@@ -20,7 +20,7 @@ export class RoutePreview {
     clearTimeout(this.timer);
     if (this.busy || !this.latest) return;
     const { state, index } = this.latest;
-    if (!state.legFollow.slice(Math.max(0, index - 1), index + 1).some(Boolean)) return;
+    if (!state.legMode.slice(Math.max(0, index - 1), index + 1).some(mode => mode !== 'straight')) return;
     this.timer = setTimeout(() => void this.request(), Math.max(0, 400 - (Date.now() - this.lastRequest)));
   }
   private async request() {
@@ -31,7 +31,7 @@ export class RoutePreview {
     const current = () => this.generation === job.generation;
     try {
       await this.router.route(job.state.points.slice(first, end + 1), job.state.legProfiles.slice(first, end), current,
-        (index, segment) => { if (current()) this.resolved(first + index, segment); }, job.state.legFollow.slice(first, end));
+        (index, segment) => { if (current()) this.resolved(first + index, segment); }, job.state.legMode.slice(first, end));
     } finally {
       this.busy = false;
       if (this.latest && !current()) this.schedule();

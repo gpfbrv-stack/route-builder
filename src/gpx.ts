@@ -1,6 +1,6 @@
 import { cumulativeDistances, nearestOnRoute, validPoint } from './geo';
 import { validateState } from './persistence';
-import type { Place, Poi, Point, RouteState } from './types';
+import type { Place, Poi, LegMode, Point, RouteState } from './types';
 import { CONFIG, type Profile } from './config';
 const NS = 'https://route-builder.local/xmlns/1';
 const poiSymbols = { conv: 'Convenience Store', shop: 'Convenience Store', vend: 'Drinking Water', water: 'Drinking Water', wc: 'Restroom', michi: 'Restaurant' };
@@ -15,7 +15,7 @@ ${pois.map(p => `<wpt lat="${p.lat}" lon="${p.lng}">${ele(p)}<name>${escapeXml(p
 <trk><name>${escapeXml(state.name)}</name><trkseg>
 ${track.map(p => `<trkpt lat="${p.lat}" lon="${p.lng}">${ele(p)}</trkpt>`).join('\n')}
 </trkseg></trk>
-<extensions><rb:editing>${escapeXml(JSON.stringify({ name: state.name, points: state.points, profile: state.profile, followRoad: state.followRoad }))}</rb:editing></extensions>
+<extensions><rb:editing>${escapeXml(JSON.stringify({ name: state.name, points: state.points, profile: state.profile, followRoad: state.mode !== 'straight' }))}</rb:editing></extensions>
 </gpx>`;
 }
 export function decimateTrack(track: Point[]): Point[] {
@@ -26,7 +26,7 @@ export function decimateTrack(track: Point[]): Point[] {
   result.push(track.at(-1)!);
   return result.map(p => ({ lat: p.lat, lng: p.lng }));
 }
-export function parseGPX(xml: string, profile: Profile = 'mtb', followRoad = true): { state: RouteState; track: Point[]; places: Place[] } {
+export function parseGPX(xml: string, profile: Profile = 'mtb', mode: LegMode = 'road'): { state: RouteState; track: Point[]; places: Place[] } {
   if (xml.length > 20_000_000 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('GPXが大きすぎるか、未対応のXML形式です');
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length || doc.documentElement.localName !== 'gpx') throw new Error('GPXを解析できません');
@@ -43,12 +43,12 @@ export function parseGPX(xml: string, profile: Profile = 'mtb', followRoad = tru
   const track = (segments[0] ?? all(doc, 'rtept')).map(point);
   if (track.length < 2 || track.length > 100000) throw new Error('GPXは2〜100,000点のトラックが必要です');
   const name = all(doc, 'trk').map(n => text(n, 'name')).find(Boolean) || all(doc, 'metadata').map(n => text(n, 'name')).find(Boolean) || '読み込んだルート';
-  let state = validateState({ name: name.slice(0, 200), points: decimateTrack(track), profile, followRoad, importedTrack: track });
+  let state = validateState({ name: name.slice(0, 200), points: decimateTrack(track), profile, mode, importedTrack: track });
   const editing = doc.getElementsByTagNameNS(NS, 'editing')[0]?.textContent;
   if (editing) { try { state = { ...validateState(JSON.parse(editing)), importedTrack: track }; } catch { /* foreign or damaged extension: keep track */ } }
   state.profile = profile;
-  state.followRoad = followRoad;
-  state.legFollow = Array(Math.max(0, state.points.length - 1)).fill(followRoad);
+  state.mode = mode;
+  state.legMode = Array(Math.max(0, state.points.length - 1)).fill(mode);
   state.legProfiles = Array(Math.max(0, state.points.length - 1)).fill(profile);
   const poiTypes = new Set<string>(Object.values(CONFIG.poi.categories).map(category => category.label));
   const places: Place[] = all(doc, 'wpt').filter(n => !poiTypes.has(text(n, 'type'))).map((n, i) => {

@@ -15,10 +15,10 @@ vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
   return { ...actual, Router: class {
     cached = () => undefined;
-    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved) => {
+    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes) => {
       captured.routeCalls++;
       return points.slice(1).map((p, i) => {
-        const segment = { points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined };
+        const segment = { points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi' };
         if (current()) resolved?.(i, segment);
         return segment;
       });
@@ -121,15 +121,15 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
     button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
   }
   const followCalls = captured.routeCalls, followPath = document.querySelector('.route-line'), drawSpy = vi.spyOn(leaflet.Polyline.prototype, 'setLatLngs');
-  button('#menu-pop [data-follow]').click(); expect(state().followRoad).toBe(false); expect((document.getElementById('follow') as HTMLInputElement).checked).toBe(false); await settle();
+  button('#menu-pop [data-mode="straight"]').click(); expect(state().mode).toBe('straight'); expect(button('.controls [data-mode="straight"]').getAttribute('aria-pressed')).toBe('true'); await settle();
   expect(captured.routeCalls).toBe(followCalls); expect(drawSpy).not.toHaveBeenCalled(); drawSpy.mockRestore();
   expect(document.querySelector('.route-line')).toBe(followPath); expectExportsDisabled(false);
-  expect(state().legFollow).toEqual([true]);
+  expect(state().legMode).toEqual(['road']);
   expect(document.getElementById('status')!.textContent).toContain('これから引く区間を直線で引きます');
   for (const selector of ['[data-waypoint="0"] .waypoint-actions button:first-child', '#menu-pop [data-action="reprofile-all"]', '#reprofile-all']) {
-    button(selector).click(); expect(state().legFollow).toEqual([false]); expect(state().legProfiles).toEqual(['road']);
+    button(selector).click(); expect(state().legMode).toEqual(['straight']); expect(state().legProfiles).toEqual(['road']);
     expect(document.querySelector('.leg-profile')!.textContent).toContain('直線');
-    button('#undo').click(); expect(state().legFollow).toEqual([true]); expect(state().legProfiles).toEqual(['mtb']); await settle();
+    button('#undo').click(); expect(state().legMode).toEqual(['road']); expect(state().legProfiles).toEqual(['mtb']); await settle();
   }
   const point = document.querySelector<HTMLButtonElement>('[data-waypoint="1"] .del')!; point.click(); expect(state().points).toHaveLength(1); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   button('#share').click(); await settle(); expect(copy).toHaveBeenCalledOnce(); expect((document.getElementById('share-url') as HTMLInputElement).hidden).toBe(true);
@@ -183,8 +183,35 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   fitShare.mockRejectedValueOnce(new Error('share failed')); button('#garmin').click(); await settle();
   expect(document.getElementById('status')!.textContent).toContain('FITを送信・保存できませんでした');
   expectExportsDisabled(false);
+  // All mode selectors affect only new legs; redrawing preserves profiles and is undoable.
+  const beforeGsi = state(), beforeGsiCalls = captured.routeCalls;
+  for (const mode of ['gsi', 'road', 'straight', 'gsi']) {
+    button(`#menu-pop [data-mode="${mode}"]`).click();
+    expect(button(`.controls [data-mode="${mode}"]`).getAttribute('aria-pressed')).toBe('true');
+    expect(state().legMode).toEqual(beforeGsi.legMode);
+    expect(state().legProfiles).toEqual(beforeGsi.legProfiles);
+    await settle(); expect(captured.routeCalls).toBe(beforeGsiCalls);
+  }
+  button('#reprofile-all').click(); await settle();
+  expect(state().legMode).toEqual(['gsi']); expect(state().legProfiles).toEqual(['road']);
+  expect(document.querySelector('.leg-profile')!.textContent).toContain('地理院');
+  expect(document.getElementById('status')!.textContent).toContain('地理院の道で引いた区間は通行可否を確認していません');
+  expect(document.getElementById('status')!.classList.contains('warn')).toBe(false);
+  expect(document.querySelector('.leaflet-control-attribution')!.textContent).toContain('道路中心線: 地理院タイル');
+  // GSI-only FIT falls back to the current profile even though the leg retains road.
+  button('.m-top [data-profile="gravel"]').click(); button('#garmin').click();
+  expect((await sharedFit()).courseMesgs![0].subSport).toBe('gravelCycling');
+  // A short road leg determines FIT subSport despite the longer GSI leg.
+  button('.m-top [data-profile="mtb"]').click(); button('#menu-pop [data-mode="road"]').click();
+  captured.map!.fire('click', { latlng: { lat: 35.1601, lng: 135.789 } }); await settle();
+  expect(state().legMode).toEqual(['gsi', 'road']); button('#garmin').click();
+  expect((await sharedFit()).courseMesgs![0].subSport).toBe('mountain');
+  button('#undo').click(); button('#undo').click(); await settle();
+  expect(state().legMode).toEqual(beforeGsi.legMode);
+  expect(document.querySelector('.leaflet-control-attribution')!.textContent).not.toContain('道路中心線');
+  button('.m-top [data-profile="road"]').click();
   captured.alternative = true;
-  button('#menu-pop [data-follow]').click();
+  button('#menu-pop [data-mode="road"]').click();
   captured.map!.fire('click', { latlng: { lat: 35.16, lng: 135.79 } }); await settle();
   expect(document.getElementById('status')!.textContent).toContain('一部区間を代替経路(trekking)で計算しました');
   expect(document.getElementById('status')!.classList.contains('warn')).toBe(true);
@@ -202,8 +229,8 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(state().legProfiles).toEqual(['road']);
   const importedShape = document.querySelector('.route-line')!.getAttribute('d'), importedCalls = captured.routeCalls;
   button('.m-top [data-profile="gravel"]').click();
-  button('#follow').click(); await settle();
-  expect(state().legFollow).toEqual([true]);
+  button('.controls [data-mode="straight"]').click(); await settle();
+  expect(state().legMode).toEqual(['road']);
   expect(state().importedTrack).toEqual(imported.points); expect(state().legProfiles).toEqual(['road']);
   expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(importedShape);
   expect(captured.routeCalls).toBe(importedCalls); expectExportsDisabled(false);

@@ -21,7 +21,7 @@ function setup(enabled = true, live?: Parameters<typeof installRouteDrag>[4]) {
     latLngToLayerPoint: ([lat, lng]: number[]) => ({ x: lng * 100, y: lat * 100 }),
     layerPointToLatLng: (p: { x: number; y: number }) => ({ lat: p.y / 100, lng: p.x / 100 }) };
   const points = [{ lat: 0, lng: 0 }, { lat: 0, lng: 2 }, { lat: 2, lng: 2 }];
-  const history = new History({ name: 'test', points, profile: 'mtb', legProfiles: points.slice(1).map(() => 'mtb'), legFollow: points.slice(1).map(() => false), followRoad: false });
+  const history = new History({ name: 'test', points, profile: 'mtb', legProfiles: points.slice(1).map(() => 'mtb'), legMode: points.slice(1).map(() => 'straight'), mode: 'straight' as const });
   const route: DragRoute = { points, shapes: [[points[0], points[1]], [points[1], points[2]]], revision: 0, enabled };
   const insert = vi.fn((index, point) => { const next = [...history.value.points]; next.splice(index, 0, point); history.set({ ...history.value, points: next }); });
   const drag = installRouteDrag(map as unknown as L.Map, { getElement: () => path } as unknown as L.Polyline, () => route, insert, live); dispose = drag.dispose;

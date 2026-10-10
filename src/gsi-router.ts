@@ -1,3 +1,4 @@
+import { CONFIG } from './config';
 import { cacheSet, RequestQueue } from './async';
 import { distance, validPoint } from './geo';
 import type { Point, Segment } from './types';
@@ -6,7 +7,6 @@ const ZOOM_SIZE = 2 ** 16;
 const EARTH_RADIUS = 6371008.8;
 const RAD = Math.PI / 180;
 const MAX_LAT = 85.05112878;
-const TILE_LIMIT = 120;
 const CACHE_LIMIT = 400;
 const CONCURRENCY = 6;
 const TIMEOUT_MS = 15000;
@@ -32,7 +32,7 @@ function tileKeys(a: Point, b: Point): string[] {
   const west = tileX(Math.min(a.lng, b.lng) - lngMargin);
   const east = tileX(Math.max(a.lng, b.lng) + lngMargin);
   const top = tileY(north), bottom = tileY(south);
-  if ((east - west + 1) * (bottom - top + 1) > TILE_LIMIT) {
+  if ((east - west + 1) * (bottom - top + 1) > CONFIG.gsi.tileLimit) {
     throw new Error('区間が長すぎます。途中に経由点を追加してください');
   }
   const keys: string[] = [];

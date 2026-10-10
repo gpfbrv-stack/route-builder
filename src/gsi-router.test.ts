@@ -1,3 +1,4 @@
+import { CONFIG } from './config';
 import { afterEach, expect, it, vi } from 'vitest';
 import { GsiRouter } from './gsi-router';
 import { distance, routeLength } from './geo';
@@ -138,14 +139,14 @@ it('chooses the shortest path through a branching graph, independent of feature 
   expect(routeLength(result.points)).toBeCloseTo(2 * Math.hypot(200, 100), 0);
 });
 
-it('rejects an area above 120 tiles before fetching', async () => {
+it('rejects an area above 300 tiles before fetching', async () => {
   const fetcher = vi.fn(async () => response());
   await expect(new GsiRouter(fetcher).route(point(0), point(10000, 10000)))
     .rejects.toThrow('区間が長すぎます。途中に経由点を追加してください');
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it.each([200, 2000])('covers the entire padded bbox at zoom 16 (%s m leg)', async length => {
+it.each([200, 2000, 4600])('covers the entire padded bbox at zoom 16 (%s m leg)', async length => {
   const a = point(0), b = point(length), margin = Math.max(400, distance(a, b) * 0.3);
   const fetcher = vi.fn(async (_url: RequestInfo | URL) => response([line([a, b])]));
   await new GsiRouter(fetcher).route(a, b);
@@ -153,7 +154,7 @@ it.each([200, 2000])('covers the entire padded bbox at zoom 16 (%s m leg)', asyn
   const xs = tiles.map(t => t.x), ys = tiles.map(t => t.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   expect(tiles).toHaveLength((maxX - minX + 1) * (maxY - minY + 1));
-  expect(tiles.length).toBeLessThanOrEqual(120);
+  expect(tiles.length).toBeLessThanOrEqual(CONFIG.gsi.tileLimit);
   const west = minX / 65536 * 360 - 180, east = (maxX + 1) / 65536 * 360 - 180;
   const north = Math.atan(Math.sinh(Math.PI * (1 - 2 * minY / 65536))) / RAD;
   const south = Math.atan(Math.sinh(Math.PI * (1 - 2 * (maxY + 1) / 65536))) / RAD;
@@ -162,6 +163,15 @@ it.each([200, 2000])('covers the entire padded bbox at zoom 16 (%s m leg)', asyn
   expect(distance(a, { lat: north, lng: a.lng })).toBeGreaterThanOrEqual(margin);
   expect(distance(a, { lat: south, lng: a.lng })).toBeGreaterThanOrEqual(margin);
   for (const [url] of fetcher.mock.calls) expect(String(url)).toMatch(/^https:\/\/cyberjapandata\.gsi\.go\.jp\/xyz\/experimental_rdcl\/16\/\d+\/\d+\.geojson$/);
+});
+
+it('allows a diagonal 4.6km leg requiring more than 120 tiles under the configured 300 limit', async () => {
+  expect(CONFIG.gsi.tileLimit).toBe(300);
+  const a = point(0), b = point(4600 / Math.SQRT2, 4600 / Math.SQRT2);
+  const { router, fetcher } = fixture([line([a, b])]);
+  expect((await router.route(a, b)).fallback).toBe(false);
+  expect(fetcher.mock.calls.length).toBeGreaterThan(120);
+  expect(fetcher.mock.calls.length).toBeLessThanOrEqual(CONFIG.gsi.tileLimit);
 });
 
 it('caches 404 as an empty tile and can route through the remaining tiles', async () => {

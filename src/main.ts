@@ -10,7 +10,7 @@ import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
 import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
-import type { RouteState, Point, Place } from './types';
+import { LEG_MODE_LABELS, type LegMode, type RouteState, type Point, type Place } from './types';
 import { filterPlaces } from './places';
 import { OsmProvider } from './osm';
 import { preparePois } from './poi';
@@ -30,6 +30,7 @@ import { icon } from './ui/icons';
 import { installRouteDrag } from './ui/route-drag';
 import { RouteLine } from './ui/route-line';
 import { RoutePreview } from './ui/route-preview';
+import { GsiUsage } from './ui/gsi-usage';
 import { installGarminDialog, sendGarminCourse, preloadFit } from './ui/garmin';
 mountUI();
 const showGarminInstructions = installGarminDialog();
@@ -42,6 +43,7 @@ const sheet = installPanel($('panel'), $<HTMLButtonElement>('panel-toggle'));
 new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 const markers = L.layerGroup().addTo(map);
 const router = new Router();
+const gsiUsage = new GsiUsage(map.attributionControl, message => status.set('gsi', message, 'info'));
 const routeLine = new RouteLine(map, router);
 const line = routeLine.hit;
 const livePreview = new RoutePreview(router, state => routeLine.update(state), (index, segment) => routeLine.resolve(index, segment));
@@ -108,7 +110,7 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legFollow: [], followRoad: true });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: 'road' as const });
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function change(next: RouteState, keepTrack = false) {
@@ -122,17 +124,19 @@ const calculate = debounce(async (version: number) => {
   let points = state.importedTrack ?? state.points;
   let shapes = state.points.slice(1).map((point, i) => [state.points[i], point]);
   if (state.importedTrack) notify('GPXの形状を保持中。経由点の編集・区間の引き直しでルートを再計算します。');
-  else if (state.legFollow.some(Boolean) && points.length > 1) {
-    notify('道に沿ったルートを計算中…', 'busy');
+  else if (state.legMode.some(mode => mode !== 'straight') && points.length > 1) {
+    notify('ルートを計算中…', 'busy');
     const segments = await router.route(points, state.legProfiles, () => version === revision, (index, segment) => {
       routeLine.resolveState(state, index, segment);
-    }, state.legFollow);
+    }, state.legMode);
     if (version !== revision) return;
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
     const warnings = routingWarnings(segments, state.legProfiles);
     notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
+    gsiUsage.update(state.legMode.includes('gsi') || segments.some(segment => segment.gsi));
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
+  if (state.importedTrack || !state.legMode.some(mode => mode !== 'straight')) gsiUsage.update(state.legMode.includes('gsi'));
   segmentShapes = state.importedTrack ? [] : shapes;
   $('summary').innerHTML = `${(routeLength(points) / 1000).toFixed(1)}<small>km</small>`;
   findPlaces(points, version);
@@ -177,6 +181,7 @@ function render() {
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
   $('summary').innerHTML = '—<small>km</small>';
   status.set('notice', '');
+  status.set('gsi', '');
   status.set('osm', '');
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。GPX保存をご利用ください。', 'warn');
   document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.value = history.value.name);
@@ -186,9 +191,11 @@ function render() {
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;
+  // Remove stale attribution immediately when clearing or redrawing the route.
+  if (!state.legMode.includes('gsi')) gsiUsage.update(state.points.slice(1).some((b, i) => router.cached(state.points[i], b, state.legProfiles[i], state.legMode[i])?.gsi));
   $('point-count').textContent = String(state.points.length);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === state.profile)));
-  document.querySelectorAll<HTMLInputElement>('[data-follow]').forEach(input => input.checked = state.followRoad);
+  syncMode(state.mode);
   document.querySelectorAll<HTMLButtonElement>('[data-action="undo"]').forEach(b => b.disabled = !history.canUndo);
   document.querySelectorAll<HTMLButtonElement>('[data-action="clear"]').forEach(b => b.disabled = !state.points.length);
   document.querySelectorAll<HTMLButtonElement>('[data-action="reprofile-all"]').forEach(b => b.disabled = state.points.length < 2);
@@ -209,7 +216,7 @@ function render() {
     const popup = document.createElement('div'); popup.className = 'waypoint-popup'; popup.append(button);
     if (i < state.legProfiles.length) {
       const description = document.createElement('span');
-      description.textContent = `次の経由点まで: ${state.legFollow[i] ? CONFIG.profiles[state.legProfiles[i]].label : '直線'}`;
+      description.textContent = `次の経由点まで: ${state.legMode[i] === 'road' ? CONFIG.profiles[state.legProfiles[i]].label : state.legMode[i] === 'gsi' ? '地理院' : '直線'}`;
       const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の設定で引き直す';
       redraw.onclick = () => { change(reprofile(history.value, i)); map.closePopup(); };
       popup.append(description, redraw);
@@ -221,7 +228,7 @@ function render() {
     focus.innerHTML = `<span class="name">${i === 0 ? 'スタート' : i === state.points.length - 1 ? 'ゴール' : '経由点'}</span><span class="sub num">—</span>`;
     if (i < state.legProfiles.length) {
       const profile = document.createElement('span'); profile.className = 'sub leg-profile';
-      profile.textContent = `次の経由点まで: ${state.legFollow[i] ? CONFIG.profiles[state.legProfiles[i]].label : '直線'}`;
+      profile.textContent = `次の経由点まで: ${state.legMode[i] === 'road' ? CONFIG.profiles[state.legProfiles[i]].label : state.legMode[i] === 'gsi' ? '地理院' : '直線'}`;
       focus.append(profile);
     }
     focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
@@ -255,15 +262,18 @@ $('profile').onchange = () => {
   notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
 };
 $('reprofile-all').onclick = () => { if (history.value.legProfiles.length) change(reprofile(history.value)); };
-$('follow').onchange = () => {
-  const followRoad = $<HTMLInputElement>('follow').checked;
-  history.value = { ...history.value, followRoad };
-  document.querySelectorAll<HTMLInputElement>('[data-follow]').forEach(input => input.checked = followRoad);
+function syncMode(mode: LegMode) {
+  document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
+}
+document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
+  const mode = button.dataset.mode as LegMode;
+  history.value = { ...history.value, mode };
+  syncMode(mode);
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
-  notify(followRoad ? 'これから引く区間を道に沿って計算します' : 'これから引く区間を直線で引きます');
-};
+  notify(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);
+});
 $('undo').onclick = () => { history.undo(); render(); };
-$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [], legFollow: [] });
+$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [], legMode: [] });
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
   history.value.name = input.value.trim() || '新しいルート';
@@ -275,7 +285,7 @@ $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
     if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
-    const imported = parseGPX(await file.text(), history.value.profile, history.value.followRoad); change(imported.state, true);
+    const imported = parseGPX(await file.text(), history.value.profile, history.value.mode); change(imported.state, true);
     $('fit').click();
   } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
@@ -293,7 +303,7 @@ $('garmin').onclick = async () => {
   try {
     await sendGarminCourse({ name: history.value.name, profile: history.value.profile,
       legs: history.value.legProfiles.map((profile, i) => ({ profile,
-        distance: segmentShapes[i] ? routeLength(segmentShapes[i]) : i === 0 ? routeLength(resolvedTrack) : 0 })),
+        distance: segmentShapes[i] ? routeLength(segmentShapes[i]) : i === 0 ? routeLength(resolvedTrack) : 0 })).filter((_, i) => history.value.legMode[i] === 'road'),
       resolvedTrack, places, pois: poiUI.fitPois }, () => showGarminInstructions(trigger));
   } catch (error) { notify(`FITを送信・保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
   finally {

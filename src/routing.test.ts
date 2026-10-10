@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Router, routingWarnings, segmentKey } from './routing';
 import { ProfileRegistry } from './brouter-profiles';
 import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
-import type { RouteState } from './types';
-beforeEach(() => { vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} }); });
+import { GsiRouter } from './gsi-router';
+import type { LegMode, RouteState } from './types';
+beforeEach(() => { vi.spyOn(GsiRouter.prototype, 'route').mockRejectedValue(new Error('no GSI path')); vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} }); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function testRouter(fetcher?: typeof fetch) {
   const registry = new ProfileRegistry();
@@ -13,7 +14,7 @@ function testRouter(fetcher?: typeof fetch) {
 }
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
-const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legFollow: [true, false, true], followRoad: true });
+const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], mode: 'road' as const });
 it('inherits profiles on append, insertion, deletion and movement, including endpoints', () => {
   const state = mixedState();
   expect(insertWaypoint(state, 4, points[4]).legProfiles).toEqual(['mtb', 'road', 'gravel', 'gravel']);
@@ -24,7 +25,7 @@ it('inherits profiles on append, insertion, deletion and movement, including end
   expect(removeWaypoint(state, 3).legProfiles).toEqual(['mtb', 'road']);
   const moved = { ...state, points: state.points.map((p, i) => i === 2 ? points[4] : p) };
   expect(moved.legProfiles).toEqual(state.legProfiles);
-  const empty = { ...state, points: [], legProfiles: [], legFollow: [] };
+  const empty = { ...state, points: [], legProfiles: [], legMode: [] };
   const first = insertWaypoint(empty, 0, points[0]);
   expect(first.legProfiles).toEqual([]);
   const second = insertWaypoint(first, 1, points[1]);
@@ -37,7 +38,7 @@ it.each([1, undefined])('undo restores a single reprofile operation (%s)', index
   const state = mixedState(), history = new History(state);
   history.set(reprofile(history.value, index));
   expect(history.value.legProfiles).toEqual(index === undefined ? ['gravel', 'gravel', 'gravel'] : ['mtb', 'gravel', 'gravel']);
-  expect(history.value.legFollow).toEqual([true, true, true]);
+  expect(history.value.legMode).toEqual(['road', 'road', 'road']);
   history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
 });
 it('requests only legs whose coordinates or profile change, and reuses cache after Undo', async () => {
@@ -151,7 +152,7 @@ it('uses custom IDs over the wire and logical keys in profileUsed, sharing regis
   expect(fetcher.mock.calls.filter(([, init]) => !init?.method).map(([url]) => new URL(String(url)).searchParams.get('profile'))).toEqual(Array(4).fill('custom_1'));
   expect(segments.every(s => s.profileUsed === 'road-jp')).toBe(true);
   expect(routingWarnings(segments, 'road')).toEqual([]);
-  expect(segmentKey(points[0], points[1], 'road')).toBe('road:true:135.000000,35.000000|135.000000,35.010000');
+  expect(segmentKey(points[0], points[1], 'road')).toBe('road:road:135.000000,35.000000|135.000000,35.010000');
 });
 it('re-registers once after HTTP 500 and caches the successful retry', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(registration(1)).mockResolvedValueOnce(new Response('', { status: 500 }))
@@ -214,42 +215,131 @@ it('shares one replacement registration for concurrent expired-ID failures', asy
 });
 
 it('inherits follow settings on append, split, move and removal without mutating the source', () => {
-  const state = { ...mixedState(), followRoad: false };
-  expect(insertWaypoint(state, 4, points[4]).legFollow).toEqual([true, false, true, false]);
-  expect(insertWaypoint(state, 2, points[4]).legFollow).toEqual([true, false, false, true]);
-  expect(insertWaypoint(state, 1, points[4]).legFollow).toEqual([true, true, false, true]);
-  expect(insertWaypoint(state, 0, points[4]).legFollow).toEqual([true, true, false, true]);
-  expect(removeWaypoint(state, 1).legFollow).toEqual([true, true]);
-  expect(removeWaypoint(state, 2).legFollow).toEqual([true, false]);
-  expect(removeWaypoint(state, 0).legFollow).toEqual([false, true]);
-  expect(removeWaypoint(state, 3).legFollow).toEqual([true, false]);
+  const state = { ...mixedState(), mode: 'straight' as const };
+  expect(insertWaypoint(state, 4, points[4]).legMode).toEqual(['road', 'straight', 'road', 'straight']);
+  expect(insertWaypoint(state, 2, points[4]).legMode).toEqual(['road', 'straight', 'straight', 'road']);
+  expect(insertWaypoint(state, 1, points[4]).legMode).toEqual(['road', 'road', 'straight', 'road']);
+  expect(insertWaypoint(state, 0, points[4]).legMode).toEqual(['road', 'road', 'straight', 'road']);
+  expect(removeWaypoint(state, 1).legMode).toEqual(['road', 'road']);
+  expect(removeWaypoint(state, 2).legMode).toEqual(['road', 'straight']);
+  expect(removeWaypoint(state, 0).legMode).toEqual(['straight', 'road']);
+  expect(removeWaypoint(state, 3).legMode).toEqual(['road', 'straight']);
   const history = new History(state);
   history.set({ ...state, points: state.points.map((p, i) => i === 1 ? points[4] : p) });
-  expect(history.value.legFollow).toEqual([true, false, true]); history.undo(); expect(history.value).toEqual(state);
-  const first = insertWaypoint({ ...state, points: [], legProfiles: [], legFollow: [] }, 0, points[0]);
-  expect(first.legFollow).toEqual([]);
-  expect(insertWaypoint(first, 1, points[1]).legFollow).toEqual([false]);
-  expect(removeWaypoint(first, 0).legFollow).toEqual([]);
-  expect(state.legFollow).toEqual([true, false, true]);
+  expect(history.value.legMode).toEqual(['road', 'straight', 'road']); history.undo(); expect(history.value).toEqual(state);
+  const first = insertWaypoint({ ...state, points: [], legProfiles: [], legMode: [] }, 0, points[0]);
+  expect(first.legMode).toEqual([]);
+  expect(insertWaypoint(first, 1, points[1]).legMode).toEqual(['straight']);
+  expect(removeWaypoint(first, 0).legMode).toEqual([]);
+  expect(state.legMode).toEqual(['road', 'straight', 'road']);
 });
 it.each([0, undefined])('redraws both settings and restores both with one undo (%s)', index => {
-  const state = { ...mixedState(), followRoad: false }, history = new History(state);
+  const state = { ...mixedState(), mode: 'straight' as const }, history = new History(state);
   history.set(reprofile(state, index));
-  expect(history.value.legFollow).toEqual(index === 0 ? [false, false, true] : [false, false, false]);
+  expect(history.value.legMode).toEqual(index === 0 ? ['straight', 'straight', 'road'] : ['straight', 'straight', 'straight']);
   expect(history.value.legProfiles).toEqual(index === 0 ? ['gravel', 'road', 'gravel'] : ['gravel', 'gravel', 'gravel']);
   history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
 });
 it('never requests straight legs, including when a road result is cached, and keeps mixed results ordered', async () => {
   const fetcher = vi.fn(async () => response()), router = testRouter(fetcher), state = mixedState();
-  const run = (follow: boolean[]) => router.route(state.points, state.legProfiles, undefined, undefined, follow);
-  const straight = await run([false, false, false]); expect(fetcher).not.toHaveBeenCalled();
+  const run = (follow: LegMode[]) => router.route(state.points, state.legProfiles, undefined, undefined, follow);
+  const straight = await run(['straight', 'straight', 'straight']); expect(fetcher).not.toHaveBeenCalled();
   expect(straight.map(s => s.points)).toEqual(state.points.slice(1).map((p, i) => [state.points[i], p]));
-  const mixed = await run(state.legFollow); expect(fetcher).toHaveBeenCalledTimes(2);
+  const mixed = await run(state.legMode); expect(fetcher).toHaveBeenCalledTimes(2);
   expect(mixed[1]).toEqual({ points: [points[1], points[2]], fallback: false });
   expect(routingWarnings(mixed, state.legProfiles)).toEqual([]);
-  expect(await run([false, false, false])).toEqual(straight); expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(router.cached(points[0], points[1], 'mtb', false)).toBeUndefined();
-  expect(router.cached(points[0], points[1], 'mtb', true)).toBeDefined();
-  expect(segmentKey(points[0], points[1], 'mtb', false)).not.toBe(segmentKey(points[0], points[1], 'mtb', true));
+  expect(await run(['straight', 'straight', 'straight'])).toEqual(straight); expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(router.cached(points[0], points[1], 'mtb', 'straight')).toBeUndefined();
+  expect(router.cached(points[0], points[1], 'mtb', 'road')).toBeDefined();
+  expect(segmentKey(points[0], points[1], 'mtb', 'straight')).not.toBe(segmentKey(points[0], points[1], 'mtb', 'road'));
   await expect(run([])).rejects.toThrow();
+});
+
+it('routes GSI without BRouter, ignores profile selection, and caches by mode', async () => {
+  const fetcher = vi.fn(), router = testRouter(fetcher);
+  const shape = [points[0], { lat: 35.004, lng: 135.002 }, points[1]];
+  const gsi = vi.mocked(GsiRouter.prototype.route).mockResolvedValue({ points: shape, fallback: false });
+  const result = await router.segment(points[0], points[1], 'mtb', 'gsi');
+  expect(result).toEqual({ points: shape, fallback: false, gsi: true });
+  expect(await router.segment(points[0], points[1], 'road', 'gsi')).toBe(result);
+  expect(router.cached(points[0], points[1], 'mtb', 'road')).toBeUndefined();
+  expect(gsi).toHaveBeenCalledOnce(); expect(fetcher).not.toHaveBeenCalled();
+  expect(routingWarnings([result], 'mtb')).toEqual([]);
+});
+it.each(['gsi', 'road'] as const)('connects the real GSI router to %s using synthetic tiles only', async mode => {
+  vi.mocked(GsiRouter.prototype.route).mockRestore();
+  const shape = [points[0], { lat: 35.004, lng: 135.002 }, points[1]];
+  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).includes('/experimental_rdcl/')
+    ? new Response(JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { ftCode: '2721', motorway: 0 }, geometry: { type: 'LineString', coordinates: shape.map(p => [p.lng, p.lat]) } }] }))
+    : new Response('no route', { status: 400 }));
+  const router = testRouter(fetcher), result = await router.segment(points[0], points[1], 'mtb', mode);
+  expect(result).toMatchObject({ fallback: false, gsi: true });
+  expect(result.points).toContainEqual(shape[1]);
+  const brouterCalls = fetcher.mock.calls.filter(([url]) => String(url).includes('brouter.de'));
+  expect(brouterCalls).toHaveLength(mode === 'gsi' ? 0 : 2);
+  if (mode === 'road') expect(result.gsiRescue).toBe(true);
+});
+it('rescues only after both MTB profiles fail, retains road mode and caches the rescue warning', async () => {
+  const fetcher = vi.fn(async () => new Response('', { status: 400 })), router = testRouter(fetcher);
+  const gsi = vi.mocked(GsiRouter.prototype.route).mockImplementation(async (a, b) => {
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    return { points: [a, { lat: 35.005, lng: 135.002 }, b], fallback: false };
+  });
+  const state: RouteState = { ...mixedState(), points: points.slice(0, 2), legProfiles: ['mtb'], legMode: ['road'] };
+  const run = () => router.route(state.points, state.legProfiles, undefined, undefined, state.legMode);
+  const result = await run();
+  expect(result[0]).toMatchObject({ gsi: true, gsiRescue: true, fallback: false });
+  expect(state.legMode).toEqual(['road']);
+  expect(routingWarnings(await run(), state.legProfiles)).toEqual(['OSMで経路が見つからないため地理院の道で計算しました']);
+  expect(gsi).toHaveBeenCalledOnce(); expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('returns a straight line with a GSI error and retries failed GSI legs', async () => {
+  const fetcher = vi.fn(), router = testRouter(fetcher);
+  const gsi = vi.mocked(GsiRouter.prototype.route).mockRejectedValue(new Error('地理院の道がつながっていません'));
+  const result = await router.segment(points[0], points[1], 'road', 'gsi');
+  expect(result).toMatchObject({ points: points.slice(0, 2), fallback: true });
+  expect(routingWarnings([result], 'road')).toContain('地理院の道がつながっていません');
+  expect(router.cached(points[0], points[1], 'road', 'gsi')).toBeUndefined();
+  await router.segment(points[0], points[1], 'road', 'gsi');
+  expect(gsi).toHaveBeenCalledTimes(2); expect(fetcher).not.toHaveBeenCalled();
+});
+it('shares GSI work while retaining live consumers and drops cancelled results', async () => {
+  let finish!: () => void, active!: () => boolean;
+  const gsi = vi.mocked(GsiRouter.prototype.route).mockImplementation((a, b, current) => {
+    active = current!;
+    return new Promise(resolve => { finish = () => resolve({ points: [a, b], fallback: false }); });
+  });
+  const router = testRouter(vi.fn()), resolved = vi.fn();
+  let current = true;
+  const old = router.route(points.slice(0, 2), 'road', () => current, resolved, ['gsi']);
+  await vi.waitFor(() => expect(gsi).toHaveBeenCalledOnce());
+  current = false;
+  const live = router.route(points.slice(0, 2), 'mtb', undefined, undefined, ['gsi']);
+  expect(active()).toBe(true); finish();
+  await Promise.all([old, live]);
+  expect(resolved).not.toHaveBeenCalled(); expect(gsi).toHaveBeenCalledOnce();
+});
+it('absorbs obsolete GSI cancellation without publishing or caching a straight fallback', async () => {
+  let reject!: (error: Error) => void, current = true;
+  vi.mocked(GsiRouter.prototype.route).mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+  const router = testRouter(vi.fn()), resolved = vi.fn();
+  const job = router.route(points.slice(0, 2), 'road', () => current, resolved, ['gsi']);
+  await vi.waitFor(() => expect(reject).toBeDefined());
+  current = false; reject(new DOMException('cancelled', 'AbortError'));
+  await expect(job).resolves.toEqual([]);
+  expect(resolved).not.toHaveBeenCalled();
+  expect(router.cached(points[0], points[1], 'road', 'gsi')).toBeUndefined();
+});
+it('inherits all three modes on append, split, prepend and deletion and restores redraws with Undo', () => {
+  const state: RouteState = { ...mixedState(), mode: 'gsi', legMode: ['road', 'gsi', 'straight'] };
+  expect(insertWaypoint(state, 4, points[4]).legMode).toEqual(['road', 'gsi', 'straight', 'gsi']);
+  expect(insertWaypoint(state, 2, points[4]).legMode).toEqual(['road', 'gsi', 'gsi', 'straight']);
+  expect(insertWaypoint(state, 0, points[4]).legMode).toEqual(['road', 'road', 'gsi', 'straight']);
+  expect(removeWaypoint(state, 2).legMode).toEqual(['road', 'gsi']);
+  expect(removeWaypoint(state, 1).legMode).toEqual(['road', 'straight']);
+  const history = new History(state);
+  history.set(reprofile(state, 0)); expect(history.value.legMode).toEqual(['gsi', 'gsi', 'straight']);
+  history.undo(); expect(history.value).toEqual(state);
+  history.set(reprofile(state)); expect(history.value.legMode).toEqual(['gsi', 'gsi', 'gsi']);
+  history.undo(); expect(history.value).toEqual(state);
 });
