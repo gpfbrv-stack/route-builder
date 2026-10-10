@@ -7,7 +7,8 @@ import { debounce } from './async';
 import { Router, joinSegments } from './routing';
 import { History } from './state';
 import { routeLength } from './geo';
-import type { RouteState } from './types';
+import type { RouteState, Point, Place } from './types';
+import { PlaceProvider } from './places';
 import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
@@ -24,6 +25,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div id="notice" role="status" aria-live="polite"></div><p id="summary">0.00 km</p>
     <p id="elevation-status" role="status"></p><div id="stats"></div><h2>標高プロファイル</h2><div id="chart"></div>
     <small>標高: 地理院タイル / 登降は5mヒステリシスによる概算</small>
+    <h2>通過する峠・山</h2><p id="places-status" role="status"></p><ul id="places"></ul>
     <h2>経由点 <span id="point-count">0</span></h2><ol id="waypoints"></ol>
     <small>ルーティング: BRouter / ${OSM_ATTRIBUTION}</small>
   </aside></main>`;
@@ -33,9 +35,42 @@ const markers = L.layerGroup().addTo(map);
 const line = L.polyline([], { color: '#0017c1', weight: 5 }).addTo(map);
 const router = new Router();
 const dem = new DemProvider();
+const placeProvider = new PlaceProvider();
+const placeMarkers = L.layerGroup().addTo(map);
+let places: Place[] = [];
 const cursor = L.circleMarker([0, 0], { radius: 7, color: '#b14c00', fillOpacity: 1 });
 let samples: Sample[] = [];
-function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }); }
+function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places); }
+function renderPlaces() {
+  placeMarkers.clearLayers(); $('places').replaceChildren();
+  places.forEach(place => {
+    const elevation = place.ele == null ? '標高不明' : `${Math.round(place.ele)} m`;
+    const label = document.createElement('span'); label.textContent = `${place.name} · ${elevation}`;
+    const marker = L.circleMarker([place.lat, place.lng], { radius: 5, color: '#115a36', fillOpacity: 1 }).addTo(placeMarkers).bindTooltip(label, { permanent: true, direction: 'top' });
+    const item = document.createElement('li'), button = document.createElement('button');
+    button.textContent = `${(place.routeDistance / 1000).toFixed(2)} km · ${place.name} · ${elevation}`;
+    button.title = `ルートから約${Math.round(place.offset)}m / 標高出典: ${place.elevationSource}`;
+    button.onclick = () => map.panTo(marker.getLatLng()); item.append(button); $('places').append(item);
+  });
+  updateChart();
+}
+const findPlaces = debounce(async (points: Point[], version: number) => {
+  if (version !== revision || points.length < 2) return;
+  $('places-status').textContent = '峠・山を検索中…';
+  try {
+    const found = await placeProvider.get(points, () => version === revision);
+    for (const place of found) {
+      if (version !== revision) return;
+      if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
+    }
+    if (version !== revision) return;
+    places = found; renderPlaces();
+    $('places-status').textContent = found.length ? `${found.length}件（OSM登録地物、近接判定）` : 'ルート近傍に登録された峠・山は見つかりませんでした。';
+  } catch (error) {
+    if (version !== revision) return;
+    places = []; renderPlaces(); $('places-status').textContent = `峠・山を取得できませんでした。${error instanceof Error ? error.message : ''}`;
+  }
+}, CONFIG.places.debounceMs);
 const history = new History({ name: '新しいルート', points: [], profile: 'mtb', followRoad: true });
 let revision = 0;
 function notify(message: string) { $('notice').textContent = message; }
@@ -54,6 +89,7 @@ const calculate = debounce(async (version: number) => {
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   line.setLatLngs(points.map(p => [p.lat, p.lng]));
   $('summary').textContent = `${(routeLength(points) / 1000).toFixed(2)} km`;
+  findPlaces(points, version);
   if (points.length < 2) { samples = []; $('stats').textContent = ''; $('elevation-status').textContent = ''; updateChart(); return; }
   $('elevation-status').textContent = '標高を取得中…';
   const next = await dem.sample(sampleRoute(points, CONFIG.elevation.intervalM), () => version === revision);
@@ -68,6 +104,7 @@ const calculate = debounce(async (version: number) => {
 function render() {
   revision++;
   samples = []; updateChart(); $('stats').textContent = ''; $('elevation-status').textContent = '';
+  places = []; renderPlaces(); $('places-status').textContent = '';
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;

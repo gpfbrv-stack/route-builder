@@ -4,6 +4,7 @@ export const CONFIG = {
   profiles: { mtb: { label: '山サイ', api: 'mtb' }, gravel: { label: 'グラベル', api: 'gravel' }, road: { label: 'ロード', api: 'fastbike' } },
   routing: { debounceMs: 500, concurrency: 2, timeoutMs: 30000, cacheSize: 512 },
   elevation: { zoom: 14, tileIds: ['dem5a_png', 'dem_png'], intervalM: 20, hysteresisM: 5 },
+  places: { passRadiusM: 100, peakRadiusM: 150, marginDegrees: 0.003, debounceMs: 1200 },
 };
 export type Profile = keyof typeof CONFIG.profiles;
 export const BASE_LAYERS = [
