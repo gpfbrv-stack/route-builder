@@ -1,7 +1,10 @@
 import type { Sample } from './elevation';
 import { elevationAt, gradeBins, gradeColor } from './grade';
-export interface ChartLabel { name: string; routeDistance: number }
-export function drawChart(container: HTMLElement, samples: Sample[], onHover: (sample: Sample | null) => void, labels: ChartLabel[] = []) {
+import { CONFIG } from './config';
+import type { Poi } from './types';
+import { layoutChartLabels, type ChartLabel } from './ui/chart-labels';
+export type { ChartLabel } from './ui/chart-labels';
+export function drawChart(container: HTMLElement, samples: Sample[], onHover: (sample: Sample | null) => void, labels: ChartLabel[] = [], pois: Poi[] = [], gap: { from: number; to: number } | null = null) {
   container.replaceChildren(); onHover(null);
   const values = samples.flatMap(s => s.ele === null ? [] : [s.ele]);
   if (!values.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = '標高データはまだありません。'; container.append(empty); return; }
@@ -14,7 +17,13 @@ export function drawChart(container: HTMLElement, samples: Sample[], onHover: (s
     const node = document.createElementNS(ns, tag); for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
     if (text) node.textContent = text; svg.append(node); return node;
   };
-  const x = (d: number) => 36 + d / total * (W - 44), y = (e: number) => 22 + (1 - (e - low) / (high - low)) * 124;
+  const laidOut = layoutChartLabels(labels, total, W);
+  const top = 22 + Math.max(0, ...laidOut.map(label => label.row ?? 0)) * 14;
+  const x = (d: number) => 36 + d / total * (W - 44), y = (e: number) => top + (1 - (e - low) / (high - low)) * (146 - top);
+  if (gap && gap.to - gap.from >= CONFIG.poi.gapWarnKm * 1000) {
+    const from = Math.max(0, Math.min(total, gap.from)), to = Math.max(from, Math.min(total, gap.to));
+    create('rect', { class: 'chart-gap', x: x(from), y: top, width: x(to) - x(from), height: 146 - top, fill: 'var(--gap-bg)' });
+  }
   for (let e = low; e <= high; e += 100) {
     create('line', { x1: 36, x2: W - 8, y1: y(e), y2: y(e), stroke: '#e6e6e6' });
     create('text', { x: 30, y: y(e) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#666' }, String(e));
@@ -37,14 +46,16 @@ export function drawChart(container: HTMLElement, samples: Sample[], onHover: (s
   let d = '', open = false;
   for (const sample of samples) { if (sample.ele === null) { open = false; continue; } d += `${open ? 'L' : 'M'}${x(sample.distance)} ${y(sample.ele)} `; open = true; }
   create('path', { d, fill: 'none', stroke: '#1a1a1a', 'stroke-width': 1.5, 'stroke-linejoin': 'round' });
-  labels.forEach(label => {
-    const xx = x(label.routeDistance);
-    create('line', { x1: xx, x2: xx, y1: 14, y2: 146, stroke: '#1a1a1a', 'stroke-dasharray': '2 3' });
-    create('path', { d: `M${xx - 5} 14 L${xx + 5} 14 L${xx} 20Z`, fill: '#1a1a1a' });
-    const text = create('text', { x: Math.max(60, Math.min(W - 60, xx)), y: 10, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700 }, label.name);
+  laidOut.forEach(({ label, x: xx, textX, row }) => {
+    create('line', { x1: xx, x2: xx, y1: top - 8, y2: 146, stroke: '#1a1a1a', 'stroke-dasharray': '2 3' });
+    const marker = create('path', { class: 'chart-place-marker', d: `M${xx - 5} ${top - 8} L${xx + 5} ${top - 8} L${xx} ${top - 2}Z`, fill: '#1a1a1a' });
+    const markerTitle = document.createElementNS(ns, 'title'); markerTitle.textContent = label.name; marker.append(markerTitle);
+    if (row === null) return;
+    const text = create('text', { class: 'chart-place-label', x: textX, y: 10 + row * 14, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700 }, label.name);
     const title = document.createElementNS(ns, 'title'); title.textContent = label.name; text.append(title);
   });
-  const cursor = create('line', { x1: 36, x2: 36, y1: 22, y2: 146, stroke: '#1a1a1a', visibility: 'hidden' });
+  for (const poi of pois) create('circle', { class: 'chart-poi', cx: x(poi.routeDistance), cy: 143, r: 4, fill: CONFIG.poi.categories[poi.kind].color, stroke: '#fff', 'stroke-width': 1.5 });
+  const cursor = create('line', { x1: 36, x2: 36, y1: top, y2: 146, stroke: '#1a1a1a', visibility: 'hidden' });
   const dot = create('circle', { r: 4, fill: '#fff', stroke: '#1a1a1a', 'stroke-width': 2, visibility: 'hidden' });
   const readout = document.createElement('output'); readout.className = 'readout num';
   let index = 0;

@@ -2,7 +2,7 @@
 import { afterAll, expect, it, vi } from 'vitest';
 import type L from 'leaflet';
 import type { Sample } from '../elevation';
-import { generateGPX } from '../gpx';
+import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined }));
 vi.mock('../map', async importOriginal => {
@@ -34,7 +34,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return this.id === 'map' ? 800 : 400; } });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const copy = vi.fn().mockResolvedValue(undefined); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
-  const created = vi.fn(() => 'blob:test'); URL.createObjectURL = created; URL.revokeObjectURL = vi.fn();
+  const created = vi.fn((_blob: Blob) => 'blob:test'); URL.createObjectURL = created; URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
   localStorage.clear();
   await import('../main');
@@ -49,9 +49,13 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
   expect(document.getElementById('poi-list')!.textContent).toContain('コンビニ');
+  expect(document.querySelectorAll('.chart-poi')).toHaveLength(1);
+  expect(document.querySelector('.chart-gap')).toBeNull();
   const convChip = document.querySelector<HTMLButtonElement>('#poi-chips button')!;
   convChip.click(); expect(document.querySelectorAll('.poi-marker')).toHaveLength(0);
+  expect(document.querySelectorAll('.chart-poi')).toHaveLength(0);
   convChip.click(); expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
+  expect(document.querySelectorAll('.chart-poi')).toHaveLength(1);
   expect(osmFetch).toHaveBeenCalledTimes(1);
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠'); expect(document.querySelector('#chart svg')).not.toBeNull();
   const mapElement = document.getElementById('map')!; mapElement.setPointerCapture = vi.fn(); mapElement.releasePointerCapture = vi.fn(); mapElement.hasPointerCapture = () => true;
@@ -62,7 +66,12 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
     (type === 'pointerdown' ? document.querySelector('.route-line')! : document).dispatchEvent(event);
     if (type === 'pointermove') expect(state().points).toHaveLength(2);
   }
-  expect(state().points).toHaveLength(3); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
+  expect(state().points).toHaveLength(3);
+  expect(document.getElementById('poi-status')!.textContent).toContain('検索中');
+  expect(document.getElementById('gap-note')!.hidden).toBe(true);
+  expect(document.querySelectorAll('.poi-marker,.poi-row,.chart-poi,.chart-gap')).toHaveLength(0);
+  expect([...document.querySelectorAll('.chip .count')].every(n => n.textContent === '0')).toBe(true);
+  button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   button('.m-top [data-profile="road"]').click(); expect(state().profile).toBe('road'); expect(document.querySelectorAll('[data-profile="road"][aria-pressed="true"]')).toHaveLength(2); await settle();
   button('#menu-pop [data-follow]').click(); expect(state().followRoad).toBe(false); expect((document.getElementById('follow') as HTMLInputElement).checked).toBe(false); await settle();
   const point = document.querySelector<HTMLButtonElement>('[data-waypoint="1"] .del')!; point.click(); expect(state().points).toHaveLength(1); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
@@ -70,6 +79,23 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   copy.mockRejectedValueOnce(new Error('denied')); button('#share').click(); await settle(); const share = document.getElementById('share-url') as HTMLInputElement; expect(share.hidden).toBe(false); expect(share.selectionEnd).toBe(share.value.length);
   button('#layer-btn').click(); button('[aria-label="地理院 標準"]').click(); expect(localStorage.getItem('route-builder-background')).toBe('地理院 標準');
   button('#export').click(); expect(created).toHaveBeenCalledOnce();
+  const exportedXml = async () => {
+    const reading = new Promise<string>((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject;
+      reader.readAsText(created.mock.lastCall![0]);
+    });
+    // jsdom schedules FileReader events with the timers faked by this integration test.
+    await vi.runAllTimersAsync();
+    const xml = await reading;
+    expect(parseGPX(xml).places.map(p => p.name)).toEqual(['花脊峠']);
+    return new DOMParser().parseFromString(xml, 'application/xml');
+  };
+  expect((await exportedXml()).querySelectorAll('wpt')).toHaveLength(2);
+  button('#poi-gpx').click(); button('#export').click();
+  expect((await exportedXml()).querySelectorAll('wpt')).toHaveLength(1);
+  button('#poi-gpx').click(); convChip.click(); button('#export').click();
+  expect((await exportedXml()).querySelectorAll('wpt')).toHaveLength(1);
+  convChip.click();
   const imported = { ...state(), name: 'GPX確認', points: [{ lat: 35.15, lng: 135.78, ele: 650 }, { lat: 35.1587, lng: 135.7861, ele: 760 }] };
   const file = new File([''], 'route.gpx'); Object.defineProperty(file, 'text', { value: async () => generateGPX(imported, imported.points, []) });
   const input = document.getElementById('file') as HTMLInputElement; Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();
@@ -99,6 +125,16 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.getElementById('poi-status')!.textContent).toContain('取得できませんでした');
   expect(document.getElementById('gap-note')!.hidden).toBe(true);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(0);
+  const longRoute = { ...imported, points: [{ lat: 35.1587, lng: 135.7861, ele: 760 }, { lat: 35.4587, lng: 135.7861, ele: 800 }] };
+  const longFile = new File([''], 'long.gpx'); Object.defineProperty(longFile, 'text', { value: async () => generateGPX(longRoute, longRoute.points) });
+  Object.defineProperty(input, 'files', { configurable: true, value: [longFile] }); input.dispatchEvent(new Event('change')); await settle();
+  const gap = document.querySelector('.chart-gap')!;
+  expect(gap).not.toBeNull(); expect(document.getElementById('gap-note')!.classList.contains('ok')).toBe(false);
+  const gapWidth = gap.getAttribute('width');
+  expect(document.querySelectorAll('.chart-poi')).toHaveLength(1);
+  convChip.click(); expect(document.querySelectorAll('.chart-poi')).toHaveLength(0);
+  expect(document.querySelector('.chart-gap')!.getAttribute('width')).toBe(gapWidth);
   button('#clear').click();
+  expect(document.querySelector('.chart-gap')).toBeNull();
   expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
 });

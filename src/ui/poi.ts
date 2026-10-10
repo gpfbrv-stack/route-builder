@@ -6,6 +6,10 @@ import type { Poi } from '../types';
 
 const kinds = Object.keys(CONFIG.poi.categories) as PoiKind[];
 const storageKey = 'route-builder-poi-visible';
+const exportKey = 'route-builder-poi-gpx';
+export function loadPoiExport(): boolean {
+  try { return localStorage.getItem(exportKey) !== 'false'; } catch { return true; }
+}
 export function loadPoiVisibility(): Record<PoiKind, boolean> {
   const on = Object.fromEntries(kinds.map(k => [k, CONFIG.poi.categories[k].on])) as Record<PoiKind, boolean>;
   try {
@@ -30,7 +34,7 @@ export function poiPopup(poi: Poi): HTMLElement {
   el.append(document.createElement('br'), link); return el;
 }
 
-export function installPoiUI(map: L.Map) {
+export function installPoiUI(map: L.Map, onChange: () => void = () => {}) {
   const $ = (id: string) => document.getElementById(id)!;
   // Below overlayPane (400), where the route is drawn, and markerPane (600).
   map.createPane('poiPane').style.zIndex = '350';
@@ -38,12 +42,17 @@ export function installPoiUI(map: L.Map) {
   const chips = new Map<PoiKind, HTMLButtonElement>();
   let pois: Poi[] = [], length = 0, ready = false, limit = 30;
   let markers = new Map<string, L.Marker>();
+  const exportCheck = $('poi-gpx') as HTMLInputElement;
+  exportCheck.checked = loadPoiExport();
+  exportCheck.onchange = () => {
+    try { localStorage.setItem(exportKey, String(exportCheck.checked)); } catch { /* Keep in-memory choice. */ }
+  };
   const markerIcon = (poi: Poi) => {
     const small = map.getZoom() < 13, size = small ? 12 : 22;
     return L.divIcon({ className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
       html: `<div class="poi-marker${small ? ' small' : ''}" style="background:${CONFIG.poi.categories[poi.kind].color}">${glyph(poi.kind)}</div>` });
   };
-  function render() {
+  function render(notify = true) {
     layer.clearLayers(); markers = new Map();
     const grouped = groupVending(pois), shown = grouped.filter(p => on[p.kind]);
     for (const k of kinds) {
@@ -51,12 +60,12 @@ export function installPoiUI(map: L.Map) {
       button.setAttribute('aria-pressed', String(on[k]));
       button.querySelector('.count')!.textContent = String(pois.filter(p => p.kind === k).reduce((n, p) => n + p.count, 0));
     }
-    const note = $('gap-note'); note.hidden = !ready;
+    const note = $('gap-note'); note.hidden = !ready; note.textContent = '';
     if (ready) {
       const gap = longestSupplyGap(pois, length), km = (gap.to - gap.from) / 1000;
       note.className = `gap-note${km >= CONFIG.poi.gapWarnKm ? '' : ' ok'}`;
       note.textContent = `補給なし最長 ${km.toFixed(1)} km（${(gap.from / 1000).toFixed(1)}〜${(gap.to / 1000).toFixed(1)} km地点）。コンビニ・商店・道の駅の登録データに基づきます。`;
-      $('poi-status').textContent = !pois.length ? 'ルート近傍に登録された補給・休憩地点は見つかりませんでした。' : !shown.length ? '表示する種類を選んでください。' : '';
+      $('poi-status').textContent = !kinds.some(k => on[k]) ? '表示する種類を選んでください。' : !shown.length ? 'ルート沿いに登録された地物は見つかりませんでした。' : '';
     }
     for (const poi of shown) {
       const marker = L.marker([poi.lat, poi.lng], { pane: 'poiPane', icon: markerIcon(poi), title: poi.name })
@@ -77,6 +86,7 @@ export function installPoiUI(map: L.Map) {
       li.append(button); list.append(li);
     }
     $('poi-more').hidden = shown.length <= limit;
+    if (notify) onChange();
   }
   for (const k of kinds) {
     const button = document.createElement('button'); button.className = 'chip'; button.type = 'button';
@@ -96,9 +106,13 @@ export function installPoiUI(map: L.Map) {
   map.on('zoomend', () => {
     for (const poi of groupVending(pois)) markers.get(poi.id)?.setIcon(markerIcon(poi));
   });
-  render();
+  render(false);
   return {
-    reset(message: string) { pois = []; ready = false; limit = 30; render(); $('poi-status').textContent = message; },
+    get chartPois() { return groupVending(pois).filter(p => on[p.kind]); },
+    get gap() { return ready ? longestSupplyGap(pois, length) : null; },
+    // GPX preserves each original feature, including the machines grouped in the UI.
+    get exportPois() { return exportCheck.checked ? pois.filter(p => on[p.kind]) : []; },
+    reset(message: string) { pois = []; length = 0; ready = false; limit = 30; render(); $('poi-status').textContent = message; },
     message(message: string) { $('poi-status').textContent = message; },
     set(next: Poi[], routeLength: number) { pois = next; length = routeLength; ready = true; limit = 30; render(); },
   };

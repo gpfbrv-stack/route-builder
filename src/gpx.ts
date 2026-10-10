@@ -1,14 +1,17 @@
 import { cumulativeDistances, nearestOnRoute, validPoint } from './geo';
 import { validateState } from './persistence';
-import type { Place, Point, RouteState } from './types';
+import type { Place, Poi, Point, RouteState } from './types';
+import { CONFIG } from './config';
 const NS = 'https://route-builder.local/xmlns/1';
+const poiSymbols = { conv: 'Convenience Store', shop: 'Convenience Store', vend: 'Drinking Water', water: 'Drinking Water', wc: 'Restroom', michi: 'Restaurant' };
 export const escapeXml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
-export function generateGPX(state: RouteState, track: Point[], places: Place[] = []): string {
+export function generateGPX(state: RouteState, track: Point[], places: Place[] = [], pois: Poi[] = []): string {
   const ele = (p: Point) => Number.isFinite(p.ele) ? `<ele>${p.ele}</ele>` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Route Builder" xmlns="http://www.topografix.com/GPX/1/1" xmlns:rb="${NS}">
 <metadata><name>${escapeXml(state.name)}</name></metadata>
 ${places.map(p => `<wpt lat="${p.lat}" lon="${p.lng}">${ele(p)}<name>${escapeXml(p.name)}</name><type>${p.kind}</type></wpt>`).join('\n')}
+${pois.map(p => `<wpt lat="${p.lat}" lon="${p.lng}">${ele(p)}<name>${escapeXml(p.name)}</name><sym>${poiSymbols[p.kind]}</sym><type>${CONFIG.poi.categories[p.kind].label}</type></wpt>`).join('\n')}
 <trk><name>${escapeXml(state.name)}</name><trkseg>
 ${track.map(p => `<trkpt lat="${p.lat}" lon="${p.lng}">${ele(p)}</trkpt>`).join('\n')}
 </trkseg></trk>
@@ -43,7 +46,8 @@ export function parseGPX(xml: string): { state: RouteState; track: Point[]; plac
   let state: RouteState = { name: name.slice(0, 200), points: decimateTrack(track), profile: 'mtb', followRoad: true, importedTrack: track };
   const editing = doc.getElementsByTagNameNS(NS, 'editing')[0]?.textContent;
   if (editing) { try { state = { ...validateState(JSON.parse(editing)), importedTrack: track }; } catch { /* foreign or damaged extension: keep track */ } }
-  const places: Place[] = all(doc, 'wpt').map((n, i) => {
+  const poiTypes = new Set<string>(Object.values(CONFIG.poi.categories).map(category => category.label));
+  const places: Place[] = all(doc, 'wpt').filter(n => !poiTypes.has(text(n, 'type'))).map((n, i) => {
     const p = point(n); return { ...p, ...nearestOnRoute(p, track), id: -i - 1, name: text(n, 'name') || '名称未登録', kind: text(n, 'type') === 'peak' ? 'peak' : 'pass', elevationSource: 'unknown' };
   });
   state.importedPlaces = places;

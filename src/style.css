@@ -254,3 +254,5 @@ button:disabled { opacity: .45; cursor: default; }
 .poi-row .val { white-space: nowrap; flex: none; }
 .poi-pop { overflow-wrap: anywhere; }
 #poi-status:empty { display: none; }
+.check-row { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 13px; color: var(--text-2); }
+.check-row input { width: 18px; height: 18px; flex: none; accent-color: var(--primary); }

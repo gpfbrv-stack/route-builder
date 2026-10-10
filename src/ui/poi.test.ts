@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import L from 'leaflet';
 import { mountUI } from './layout';
-import { installPoiUI, loadPoiVisibility, poiPopup } from './poi';
+import { installPoiUI, loadPoiVisibility, loadPoiExport, poiPopup } from './poi';
 import type { Poi } from '../types';
 
 let map: L.Map;
@@ -68,4 +68,45 @@ it('renders untrusted names/hours as text and creates only a user-operated exter
   const link = popup.querySelector('a')!;
   expect(link.href).toBe('https://www.google.com/maps/search/?api=1&query=35,135');
   expect(link.target).toBe('_blank'); expect(link.rel).toBe('noopener');
+});
+it('clears old counts, gap, rows, markers and export/chart data as a search starts', () => {
+  const changed = vi.fn(), ui = installPoiUI(map, changed);
+  ui.set([poi(1)], 30000); document.querySelector<HTMLButtonElement>('.poi-row')!.click();
+  expect($('gap-note').hidden).toBe(false);
+  ui.reset('補給・休憩を検索中…');
+  expect($('poi-status').textContent).toBe('補給・休憩を検索中…');
+  expect($('gap-note').hidden).toBe(true); expect($('gap-note').textContent).toBe('');
+  expect(document.querySelectorAll('.poi-row,.poi-marker,.poi-pop')).toHaveLength(0);
+  expect([...document.querySelectorAll('.chip .count')].every(n => n.textContent === '0')).toBe(true);
+  expect($('poi-more').hidden).toBe(true);
+  expect(ui.chartPois).toEqual([]); expect(ui.exportPois).toEqual([]); expect(ui.gap).toBeNull();
+  chip('コンビニ').click(); expect($('poi-status').textContent).toContain('検索中');
+  expect(changed).toHaveBeenCalledTimes(3);
+});
+it('only asks for a category when all categories are off, including empty datasets', () => {
+  const ui = installPoiUI(map); ui.set([poi(1, 'wc')], 5000);
+  expect($('poi-status').textContent).toBe('ルート沿いに登録された地物は見つかりませんでした。');
+  document.querySelectorAll<HTMLButtonElement>('.chip[aria-pressed="true"]').forEach(b => b.click());
+  expect($('poi-status').textContent).toBe('表示する種類を選んでください。');
+  ui.set([], 5000); expect($('poi-status').textContent).toBe('表示する種類を選んでください。');
+  chip('水場').click(); expect($('poi-status').textContent).toBe('ルート沿いに登録された地物は見つかりませんでした。');
+});
+it('shares visibility with grouped chart dots and original GPX features, preserving the gap', () => {
+  const ui = installPoiUI(map);
+  ui.set([poi(1), poi(2, 'vend'), { ...poi(3, 'vend'), routeDistance: 2100 }, poi(4, 'wc')], 30000);
+  expect(ui.chartPois).toHaveLength(2); expect(ui.exportPois).toHaveLength(3);
+  const gap = ui.gap; chip('コンビニ').click();
+  expect(ui.chartPois).toHaveLength(1); expect(ui.exportPois).toHaveLength(2); expect(ui.gap).toEqual(gap);
+  const checkbox = $('poi-gpx') as HTMLInputElement;
+  expect(checkbox.checked).toBe(true); checkbox.click();
+  expect(ui.exportPois).toEqual([]); expect(ui.chartPois).toHaveLength(1); expect(loadPoiExport()).toBe(false);
+  checkbox.click(); expect(loadPoiExport()).toBe(true); expect(ui.exportPois).toHaveLength(2);
+});
+it('restores the GPX checkbox and tolerates denied storage', () => {
+  localStorage.setItem('route-builder-poi-gpx', 'false');
+  const ui = installPoiUI(map); ui.set([poi(1)], 30000);
+  expect(($('poi-gpx') as HTMLInputElement).checked).toBe(false); expect(ui.exportPois).toEqual([]);
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+  expect(loadPoiExport()).toBe(true); $('poi-gpx').click(); expect(ui.exportPois).toHaveLength(1);
 });

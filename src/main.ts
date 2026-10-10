@@ -44,7 +44,7 @@ const router = new Router();
 const dem = new DemProvider();
 const osmProvider = new OsmProvider();
 const placeMarkers = L.layerGroup().addTo(map);
-const poiUI = installPoiUI(map);
+const poiUI = installPoiUI(map, updateChart);
 let places: Place[] = [];
 const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
 let samples: Sample[] = [];
@@ -52,7 +52,7 @@ let resolvedTrack: Point[] = [];
 let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
 function syncExport() { document.querySelectorAll<HTMLButtonElement>('[data-action="export"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2); }
-function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places); }
+function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
   places.forEach(place => {
@@ -72,7 +72,7 @@ function renderPlaces() {
 const findPlaces = debounce(async (points: Point[], version: number) => {
   if (version !== revision || points.length < 2) return;
   $('places-status').textContent = '峠・山を検索中…';
-  poiUI.message('補給・休憩を検索中…');
+  poiUI.reset('補給・休憩を検索中…');
   const imported = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : undefined;
   try {
     const result = await osmProvider.get(points, () => version === revision, retrying => {
@@ -172,7 +172,7 @@ function render() {
   document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.value = history.value.name);
   samples = []; updateChart(); renderStats(); status.set('elevation', '');
   places = []; renderPlaces(); $('places-status').textContent = history.value.points.length < 2 ? 'ルートを描くと近くの峠・山を表示します。' : '峠・山を検索待ち…';
-  poiUI.reset(history.value.points.length < 2 ? 'ルートを描くと近くの補給・休憩地点を表示します。' : '補給・休憩を検索待ち…');
+  poiUI.reset(history.value.points.length < 2 ? 'ルートを描くと近くの補給・休憩地点を表示します。' : '補給・休憩を検索中…');
   markers.clearLayers();
   $('waypoints').replaceChildren();
   const state = history.value;
@@ -225,7 +225,7 @@ $('file').onchange = async () => {
 };
 $('export').onclick = () => {
   if (readyRevision !== revision || placesRevision !== revision) return;
-  const blob = new Blob([generateGPX(history.value, resolvedTrack, places)], { type: 'application/gpx+xml' });
+  const blob = new Blob([generateGPX(history.value, resolvedTrack, places, poiUI.exportPois)], { type: 'application/gpx+xml' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = gpxFilename(history.value.name); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   if (resolvedTrack.some(p => p.ele == null)) notify('標高欠測点はeleを省略して保存しました。');
 };
