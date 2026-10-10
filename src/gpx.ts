@@ -1,7 +1,7 @@
 import { cumulativeDistances, nearestOnRoute, validPoint } from './geo';
 import { validateState } from './persistence';
 import type { Place, Poi, Point, RouteState } from './types';
-import { CONFIG } from './config';
+import { CONFIG, type Profile } from './config';
 const NS = 'https://route-builder.local/xmlns/1';
 const poiSymbols = { conv: 'Convenience Store', shop: 'Convenience Store', vend: 'Drinking Water', water: 'Drinking Water', wc: 'Restroom', michi: 'Restaurant' };
 export const escapeXml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
@@ -26,7 +26,7 @@ export function decimateTrack(track: Point[]): Point[] {
   result.push(track.at(-1)!);
   return result.map(p => ({ lat: p.lat, lng: p.lng }));
 }
-export function parseGPX(xml: string): { state: RouteState; track: Point[]; places: Place[] } {
+export function parseGPX(xml: string, profile: Profile = 'mtb'): { state: RouteState; track: Point[]; places: Place[] } {
   if (xml.length > 20_000_000 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('GPXが大きすぎるか、未対応のXML形式です');
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length || doc.documentElement.localName !== 'gpx') throw new Error('GPXを解析できません');
@@ -43,9 +43,11 @@ export function parseGPX(xml: string): { state: RouteState; track: Point[]; plac
   const track = (segments[0] ?? all(doc, 'rtept')).map(point);
   if (track.length < 2 || track.length > 100000) throw new Error('GPXは2〜100,000点のトラックが必要です');
   const name = all(doc, 'trk').map(n => text(n, 'name')).find(Boolean) || all(doc, 'metadata').map(n => text(n, 'name')).find(Boolean) || '読み込んだルート';
-  let state: RouteState = { name: name.slice(0, 200), points: decimateTrack(track), profile: 'mtb', followRoad: true, importedTrack: track };
+  let state = validateState({ name: name.slice(0, 200), points: decimateTrack(track), profile, followRoad: true, importedTrack: track });
   const editing = doc.getElementsByTagNameNS(NS, 'editing')[0]?.textContent;
   if (editing) { try { state = { ...validateState(JSON.parse(editing)), importedTrack: track }; } catch { /* foreign or damaged extension: keep track */ } }
+  state.profile = profile;
+  state.legProfiles = Array(Math.max(0, state.points.length - 1)).fill(profile);
   const poiTypes = new Set<string>(Object.values(CONFIG.poi.categories).map(category => category.label));
   const places: Place[] = all(doc, 'wpt').filter(n => !poiTypes.has(text(n, 'type'))).map((n, i) => {
     const p = point(n); return { ...p, ...nearestOnRoute(p, track), id: -i - 1, name: text(n, 'name') || '名称未登録', kind: text(n, 'type') === 'peak' ? 'peak' : 'pass', elevationSource: 'unknown' };

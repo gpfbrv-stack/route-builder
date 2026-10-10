@@ -211,6 +211,15 @@ button:disabled { opacity: .45; cursor: default; }
 .row-copy { min-width: 0; text-align: left; }
 .row-copy > span { display: block; }
 .waypoint-focus { border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
+.waypoint-menu { position: relative; }
+.waypoint-menu > summary { display: grid; place-items: center; width: 40px; height: 40px; cursor: pointer; list-style: none; border-radius: var(--radius); }
+.waypoint-menu > summary::-webkit-details-marker { display: none; }
+.waypoint-actions { position: absolute; right: 0; top: 40px; z-index: 500; width: min(256px, 75vw); padding: var(--sp1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.waypoint-actions button, .waypoint-popup button { display: block; width: 100%; min-height: 40px; padding: var(--sp1); border: 0; border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; white-space: normal; cursor: pointer; }
+.waypoint-actions button:hover, .waypoint-popup button:hover { background: var(--surface-2); }
+.waypoint-popup { display: grid; gap: var(--sp1); }
+.edit-bar { max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; }
+.menu-pop [data-action="reprofile-all"] { height: auto; min-height: 44px; padding-block: var(--sp1); white-space: normal; }
 #places-status:empty { display: none; }
 .menu-pop .toggle-row { padding: 0 12px; min-height: 44px; }
 .sheet-dragging .sidebar, .sheet-dragging .m-tools, .sheet-dragging .leaflet-bottom { transition: none !important; }

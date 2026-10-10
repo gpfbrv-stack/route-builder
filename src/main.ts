@@ -8,7 +8,7 @@ import { createMap } from './map';
 import { CONFIG, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
-import { History } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import type { RouteState, Point, Place } from './types';
 import { filterPlaces } from './places';
@@ -106,27 +106,27 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', followRoad: true });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], followRoad: true });
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function change(next: RouteState, keepTrack = false) {
   if (next.points.length > 200) { notify('経由点は200点までです。', 'warn'); return; }
   history.set(keepTrack ? next : { ...next, importedTrack: undefined, importedPlaces: undefined }); render();
 }
-function remove(index: number) { change({ ...history.value, points: history.value.points.filter((_, i) => i !== index) }); }
+function remove(index: number) { change(removeWaypoint(history.value, index)); }
 const calculate = debounce(async (version: number) => {
   if (version !== revision) return;
   const state = structuredClone(history.value);
   let points = state.importedTrack ?? state.points;
   let shapes = state.points.slice(1).map((point, i) => [state.points[i], point]);
-  if (state.importedTrack) notify('GPXの形状を保持中。経由点・走り方を編集するとルートを再計算します。');
+  if (state.importedTrack) notify('GPXの形状を保持中。経由点の編集・区間の引き直しでルートを再計算します。');
   else if (state.followRoad && points.length > 1) {
     notify('道に沿ったルートを計算中…', 'busy');
-    const segments = await router.route(points, state.profile, () => version === revision);
+    const segments = await router.route(points, state.legProfiles, () => version === revision);
     if (version !== revision) return;
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
-    const warnings = routingWarnings(segments, state.profile);
+    const warnings = routingWarnings(segments, state.legProfiles);
     notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   setLine(points);
@@ -188,32 +188,63 @@ function render() {
   document.querySelectorAll<HTMLInputElement>('[data-follow]').forEach(input => input.checked = state.followRoad);
   document.querySelectorAll<HTMLButtonElement>('[data-action="undo"]').forEach(b => b.disabled = !history.canUndo);
   document.querySelectorAll<HTMLButtonElement>('[data-action="clear"]').forEach(b => b.disabled = !state.points.length);
+  document.querySelectorAll<HTMLButtonElement>('[data-action="reprofile-all"]').forEach(b => b.disabled = state.points.length < 2);
+  $<HTMLSelectElement>('profile').value = state.profile;
   $('hint').hidden = state.points.length >= 2;
   state.points.forEach((point, i) => {
     const cls = i === 0 ? 'start' : i === state.points.length - 1 ? 'goal' : '', badge = i === 0 ? 'S' : i === state.points.length - 1 ? 'G' : String(i + 1);
     const marker = L.marker([point.lat, point.lng], { draggable: true, title: `経由点 ${i + 1}`, icon: L.divIcon({ className: '', html: `<div class="wp-marker ${cls}">${badge}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(markers);
     marker.on('dragend', () => { const p = marker.getLatLng(); change({ ...history.value, points: history.value.points.map((old, index) => index === i ? { lat: p.lat, lng: p.lng } : old) }); });
     const button = document.createElement('button'); button.textContent = `経由点 ${i + 1} を削除`; button.onclick = () => { remove(i); map.closePopup(); };
-    marker.bindPopup(button);
+    const popup = document.createElement('div'); popup.className = 'waypoint-popup'; popup.append(button);
+    if (i < state.legProfiles.length) {
+      const description = document.createElement('span');
+      description.textContent = `次の経由点まで: ${CONFIG.profiles[state.legProfiles[i]].label}`;
+      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の走り方で引き直す';
+      redraw.onclick = () => { change(reprofile(history.value, i)); map.closePopup(); };
+      popup.append(description, redraw);
+    }
+    marker.bindPopup(popup);
     const item = document.createElement('li'); item.className = 'row'; item.dataset.waypoint = String(i);
     const label = document.createElement('span'); label.className = `wp-badge ${cls}`; label.textContent = badge;
     const focus = document.createElement('button'); focus.className = 'waypoint-focus row-copy';
     focus.innerHTML = `<span class="name">${i === 0 ? 'スタート' : i === state.points.length - 1 ? 'ゴール' : '経由点'}</span><span class="sub num">—</span>`;
+    if (i < state.legProfiles.length) {
+      const profile = document.createElement('span'); profile.className = 'sub leg-profile';
+      profile.textContent = `次の経由点まで: ${CONFIG.profiles[state.legProfiles[i]].label}`;
+      focus.append(profile);
+    }
     focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
     const del = document.createElement('button'); del.className = 'icon-btn del'; del.innerHTML = icon('x'); del.setAttribute('aria-label', `経由点 ${i + 1} を削除`); del.onclick = () => remove(i);
-    item.append(label, focus, del); $('waypoints').append(item);
+    const menu = document.createElement('details'); menu.className = 'waypoint-menu';
+    const toggle = document.createElement('summary'); toggle.textContent = '…'; toggle.setAttribute('aria-label', `経由点 ${i + 1} のメニュー`);
+    const actions = document.createElement('div'); actions.className = 'waypoint-actions';
+    if (i < state.legProfiles.length) {
+      const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の走り方で引き直す';
+      redraw.onclick = () => change(reprofile(history.value, i)); actions.append(redraw);
+    }
+    actions.append(del); menu.append(toggle, actions);
+    menu.addEventListener('keydown', e => { if (e.key === 'Escape') { menu.open = false; toggle.focus(); } });
+    item.append(label, focus, menu); $('waypoints').append(item);
   });
   setLine(state.importedTrack ?? state.points);
   calculate(revision);
 }
 const routeDrag = installRouteDrag(map, line, () => ({ shapes: segmentShapes, points: history.value.points, revision, enabled: !history.value.importedTrack && segmentShapes.length > 0 }), (index, point) => {
-  const points = [...history.value.points]; points.splice(index, 0, point); change({ ...history.value, points });
+  change(insertWaypoint(history.value, index, point));
 });
-map.on('click', (event: L.LeafletMouseEvent) => change({ ...history.value, points: [...history.value.points, { lat: event.latlng.lat, lng: event.latlng.lng }] }));
-$('profile').onchange = () => change({ ...history.value, profile: $<HTMLSelectElement>('profile').value as Profile });
+map.on('click', (event: L.LeafletMouseEvent) => change(insertWaypoint(history.value, history.value.points.length, { lat: event.latlng.lat, lng: event.latlng.lng })));
+$('profile').onchange = () => {
+  const profile = $<HTMLSelectElement>('profile').value as Profile;
+  history.value = selectProfile(history.value, profile);
+  document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === profile)));
+  status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
+  notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
+};
+$('reprofile-all').onclick = () => { if (history.value.legProfiles.length) change(reprofile(history.value)); };
 $('follow').onchange = () => change({ ...history.value, followRoad: $<HTMLInputElement>('follow').checked });
 $('undo').onclick = () => { history.undo(); render(); };
-$('clear').onclick = () => change({ ...history.value, points: [] });
+$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [] });
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
   history.value.name = input.value.trim() || '新しいルート';
@@ -225,7 +256,7 @@ $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
     if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
-    const imported = parseGPX(await file.text()); change(imported.state, true);
+    const imported = parseGPX(await file.text(), history.value.profile); change(imported.state, true);
     setLine(imported.track); $('fit').click();
   } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
@@ -241,7 +272,10 @@ $('garmin').onclick = async () => {
   const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   garminBusy = true; syncExport();
   try {
-    await sendGarminCourse({ name: history.value.name, profile: history.value.profile, resolvedTrack, places, pois: poiUI.fitPois }, () => showGarminInstructions(trigger));
+    await sendGarminCourse({ name: history.value.name, profile: history.value.profile,
+      legs: history.value.legProfiles.map((profile, i) => ({ profile,
+        distance: segmentShapes[i] ? routeLength(segmentShapes[i]) : i === 0 ? routeLength(resolvedTrack) : 0 })),
+      resolvedTrack, places, pois: poiUI.fitPois }, () => showGarminInstructions(trigger));
   } catch (error) { notify(`FITを送信・保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
   finally {
     garminBusy = false; syncExport();

@@ -3,11 +3,22 @@ import { expect, it } from 'vitest';
 import { generateGPX, parseGPX, decimateTrack, gpxFilename } from './gpx';
 import type { Place, Poi, RouteState } from './types';
 import { CONFIG } from './config';
-const state: RouteState = { name: '京都 & <峠> "旅"', points: [{ lat: 35, lng: 135 }, { lat: 35.01, lng: 135.01 }], profile: 'gravel', followRoad: true };
+const state: RouteState = { name: '京都 & <峠> "旅"', points: [{ lat: 35, lng: 135 }, { lat: 35.01, lng: 135.01 }], profile: 'gravel', legProfiles: ['gravel'], followRoad: true };
+it('assigns the current profile to all imported legs while retaining geometry and anchors', () => {
+  const xml = generateGPX(state, state.points);
+  for (const profile of ['mtb', 'road', 'gravel'] as const) {
+    const result = parseGPX(xml, profile);
+    expect(result.state.profile).toBe(profile);
+    expect(result.state.legProfiles).toEqual([profile]);
+    expect(result.state.points).toEqual(state.points); expect(result.track).toEqual(state.points);
+  }
+  const foreign = '<gpx><rte><rtept lat="35" lon="135"/><rtept lat="35.01" lon="135"/></rte></gpx>';
+  expect(parseGPX(foreign, 'road').state.legProfiles).toEqual(['road']);
+});
 it('round trips exact geometry, elevations, Unicode and editing anchors', () => {
   const track = [{ lat: 35, lng: 135, ele: 0 }, { lat: 35.001234567, lng: 135.005, ele: -1.25 }, { lat: 35.01, lng: 135.01, ele: 100 }];
   const places: Place[] = [{ lat: 35, lng: 135, ele: 42, name: '峠 & 山', id: 1, kind: 'pass', offset: 0, routeDistance: 0, elevationSource: 'OSM' }];
-  const result = parseGPX(generateGPX(state, track, places));
+  const result = parseGPX(generateGPX(state, track, places), 'gravel');
   expect(result.track).toEqual(track); expect(result.state.points).toEqual(state.points);
   expect(result.state.name).toBe(state.name); expect(result.state.profile).toBe('gravel');
   expect(result.places[0].name).toBe('峠 & 山'); expect(result.places[0].ele).toBe(42);

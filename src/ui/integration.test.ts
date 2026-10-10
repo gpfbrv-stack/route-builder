@@ -5,7 +5,7 @@ import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false }));
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0 }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
@@ -13,7 +13,7 @@ vi.mock('../map', async importOriginal => {
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
-  return { ...actual, Router: class { route = async (points: Sample[]) => points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined })); } };
+  return { ...actual, Router: class { route = async (points: Sample[]) => { captured.routeCalls++; return points.slice(1).map((p, i) => ({ points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined })); }; } };
 });
 afterAll(() => { captured.map?.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and undo', async () => {
@@ -76,7 +76,22 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelectorAll('.poi-marker,.poi-row,.chart-poi,.chart-gap')).toHaveLength(0);
   expect([...document.querySelectorAll('.chip .count')].every(n => n.textContent === '0')).toBe(true);
   button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
-  button('.m-top [data-profile="road"]').click(); expect(state().profile).toBe('road'); expect(document.querySelectorAll('[data-profile="road"][aria-pressed="true"]')).toHaveLength(2); await settle();
+  const callsBeforeSelection = captured.routeCalls, shapeBeforeSelection = document.querySelector('.route-line')!.getAttribute('d');
+  button('.m-top [data-profile="road"]').click(); expect(state().profile).toBe('road'); expect(document.querySelectorAll('[data-profile="road"][aria-pressed="true"]')).toHaveLength(2);
+  expect(document.getElementById('status')!.textContent).toContain('これから引く区間をロードで計算します');
+  expectExportsDisabled(false); await settle();
+  expect(captured.routeCalls).toBe(callsBeforeSelection);
+  expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(shapeBeforeSelection);
+  expect(state().legProfiles).toEqual(['mtb']);
+  expect(document.querySelector('[data-waypoint="0"] .leg-profile')!.textContent).toContain('山サイ');
+  expect(document.querySelector('[data-waypoint="1"] .leg-profile')).toBeNull();
+  button('[data-waypoint="0"] .waypoint-focus').click();
+  button('.waypoint-popup button:last-child').click(); expect(state().legProfiles).toEqual(['road']);
+  button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  for (const selector of ['[data-waypoint="0"] .waypoint-actions button:first-child', '#menu-pop [data-action="reprofile-all"]', '#reprofile-all']) {
+    button(selector).click(); expect(state().legProfiles).toEqual(['road']);
+    button('#undo').click(); expect(state().legProfiles).toEqual(['mtb']); await settle();
+  }
   button('#menu-pop [data-follow]').click(); expect(state().followRoad).toBe(false); expect((document.getElementById('follow') as HTMLInputElement).checked).toBe(false); await settle();
   const point = document.querySelector<HTMLButtonElement>('[data-waypoint="1"] .del')!; point.click(); expect(state().points).toHaveLength(1); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   button('#share').click(); await settle(); expect(copy).toHaveBeenCalledOnce(); expect((document.getElementById('share-url') as HTMLInputElement).hidden).toBe(true);
@@ -117,7 +132,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   };
   button('#garmin').click();
   const fit = await sharedFit();
-  expect(fit.courseMesgs![0].subSport).toBe('road'); expect(fit.recordMesgs).toHaveLength(2);
+  expect(fit.courseMesgs![0].subSport).toBe('mountain'); expect(fit.recordMesgs).toHaveLength(2);
   expect(fit.coursePointMesgs!.map(p => p.type)).toEqual(['summit', 'store']);
   button('#poi-gpx').click(); button('.peek-row [data-action="garmin"]').click();
   expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']);
@@ -146,6 +161,12 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   const file = new File([''], 'route.gpx'); Object.defineProperty(file, 'text', { value: async () => generateGPX(imported, imported.points, []) });
   const input = document.getElementById('file') as HTMLInputElement; Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();
   expect(state().importedTrack).toHaveLength(2); expect(state().name).toBe('GPX確認'); expect(button('#export').disabled).toBe(false);
+  expect(state().legProfiles).toEqual(['road']);
+  const importedShape = document.querySelector('.route-line')!.getAttribute('d'), importedCalls = captured.routeCalls;
+  button('.m-top [data-profile="gravel"]').click(); await settle();
+  expect(state().importedTrack).toEqual(imported.points); expect(state().legProfiles).toEqual(['road']);
+  expect(document.querySelector('.route-line')!.getAttribute('d')).toBe(importedShape);
+  expect(captured.routeCalls).toBe(importedCalls); expectExportsDisabled(false);
   const hash = encodeRoute({ ...imported, name: '共有確認' }); window.history.replaceState(null, '', hash); window.dispatchEvent(new HashChangeEvent('hashchange')); await settle(); expect(state().name).toBe('共有確認'); expect(location.hash).toBe('');
   button('#clear').click(); expect(state().points).toHaveLength(0); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   captured.map!.fire('click', { latlng: { lat: 35.15, lng: 135.78 } }); await settle();

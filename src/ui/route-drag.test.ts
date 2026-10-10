@@ -17,7 +17,7 @@ function setup(enabled = true) {
   const handler = () => { let on = true; return { enabled: () => on, disable: vi.fn(() => { on = false; }), enable: vi.fn(() => { on = true; }) }; };
   const map = { getContainer: () => element, mouseEventToLatLng: (e: MouseEvent) => ({ lat: e.clientY / 100, lng: e.clientX / 100 }), dragging: handler(), touchZoom: handler() };
   const points = [{ lat: 0, lng: 0 }, { lat: 0, lng: 2 }, { lat: 2, lng: 2 }];
-  const history = new History({ name: 'test', points, profile: 'mtb', followRoad: false });
+  const history = new History({ name: 'test', points, profile: 'mtb', legProfiles: points.slice(1).map(() => 'mtb'), followRoad: false });
   const route: DragRoute = { points, shapes: [[points[0], points[1]], [points[1], points[2]]], revision: 0, enabled };
   const insert = vi.fn((index, point) => { const next = [...history.value.points]; next.splice(index, 0, point); history.set({ ...history.value, points: next }); });
   const drag = installRouteDrag(map as unknown as L.Map, { getElement: () => path } as unknown as L.Polyline, () => route, insert); dispose = drag.dispose;

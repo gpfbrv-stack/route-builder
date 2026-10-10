@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Router, routingWarnings, segmentKey } from './routing';
 import { ProfileRegistry } from './brouter-profiles';
+import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
+import type { RouteState } from './types';
 beforeEach(() => { vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} }); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function testRouter(fetcher?: typeof fetch) {
@@ -11,6 +13,62 @@ function testRouter(fetcher?: typeof fetch) {
 }
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
+const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], followRoad: true });
+it('inherits profiles on append, insertion, deletion and movement, including endpoints', () => {
+  const state = mixedState();
+  expect(insertWaypoint(state, 4, points[4]).legProfiles).toEqual(['mtb', 'road', 'gravel', 'gravel']);
+  expect(insertWaypoint(state, 2, points[4]).legProfiles).toEqual(['mtb', 'road', 'road', 'gravel']);
+  expect(removeWaypoint(state, 1).legProfiles).toEqual(['mtb', 'gravel']);
+  expect(removeWaypoint(state, 2).legProfiles).toEqual(['mtb', 'road']);
+  expect(removeWaypoint(state, 0).legProfiles).toEqual(['road', 'gravel']);
+  expect(removeWaypoint(state, 3).legProfiles).toEqual(['mtb', 'road']);
+  const moved = { ...state, points: state.points.map((p, i) => i === 2 ? points[4] : p) };
+  expect(moved.legProfiles).toEqual(state.legProfiles);
+  const empty = { ...state, points: [], legProfiles: [] };
+  const first = insertWaypoint(empty, 0, points[0]);
+  expect(first.legProfiles).toEqual([]);
+  const second = insertWaypoint(first, 1, points[1]);
+  expect(second.legProfiles).toEqual(['gravel']);
+  expect(removeWaypoint(second, 0).legProfiles).toEqual([]);
+  expect(removeWaypoint(first, 0)).toEqual(empty);
+  expect(state.legProfiles).toEqual(['mtb', 'road', 'gravel']);
+});
+it.each([1, undefined])('undo restores a single reprofile operation (%s)', index => {
+  const state = mixedState(), history = new History(state);
+  history.set(reprofile(history.value, index));
+  expect(history.value.legProfiles).toEqual(index === undefined ? ['gravel', 'gravel', 'gravel'] : ['mtb', 'gravel', 'gravel']);
+  history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
+});
+it('requests only legs whose coordinates or profile change, and reuses cache after Undo', async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL) => response()), router = testRouter(fetcher);
+  const history = new History(mixedState());
+  await router.route(history.value.points, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  history.value = selectProfile(history.value, 'road');
+  await router.route(history.value.points, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  history.set(reprofile(history.value, 0));
+  await router.route(history.value.points, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  history.set(reprofile(history.value));
+  await router.route(history.value.points, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  history.undo(); history.undo();
+  const segments = await router.route(history.value.points, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(routingWarnings(segments, history.value.legProfiles)).toEqual([]);
+  const moved = history.value.points.map((p, i) => i === 1 ? { ...p, lng: p.lng + 0.01 } : p);
+  await router.route(moved, history.value.legProfiles);
+  expect(fetcher).toHaveBeenCalledTimes(7);
+  expect(fetcher.mock.calls.slice(-2).map(([url]) => new URL(String(url)).searchParams.get('profile'))).toEqual(['custom_1', 'custom_4']);
+});
+it('checks warnings against each leg profile', () => {
+  expect(routingWarnings([
+    { points: [], fallback: false, profileUsed: 'road-jp' },
+    { points: [], fallback: false, profileUsed: 'trekking-jp' },
+    { points: [], fallback: false, profileUsed: 'gravel-jp' },
+  ], ['road', 'mtb', 'gravel'])).toEqual(['一部区間を代替経路(trekking-jp)で計算しました']);
+});
 it('retries mtb with trekking and caches the alternative under the requested profile and segment', async () => {
   const fetcher = vi.fn()
     .mockResolvedValueOnce(new Response('no track found at pass=0', { status: 400 }))

@@ -57,24 +57,27 @@ export class Router {
     const params = new URLSearchParams({ lonlats: `${a.lng},${a.lat}|${b.lng},${b.lat}`, profile, alternativeidx: '0', format: 'geojson' });
     return this.request(`https://brouter.de/brouter?${params}`, { signal: AbortSignal.timeout(CONFIG.routing.timeoutMs) });
   }
-  async route(points: Point[], profile: Profile, current = () => true): Promise<Segment[]> {
+  async route(points: Point[], profiles: Profile | Profile[], current = () => true): Promise<Segment[]> {
+    if (Array.isArray(profiles) && profiles.length !== Math.max(0, points.length - 1)) throw new Error('区間の走り方の数が不正です');
     const results: Segment[] = [];
     let next = 0;
     await Promise.all(Array.from({ length: CONFIG.routing.concurrency }, async () => {
       while (current() && next < points.length - 1) {
         const i = next++;
-        results[i] = await this.segment(points[i], points[i + 1], profile);
+        results[i] = await this.segment(points[i], points[i + 1], typeof profiles === 'string' ? profiles : profiles[i]);
       }
     }));
     return results;
   }
 }
-export function routingWarnings(segments: Segment[], profile: Profile): string[] {
+export function routingWarnings(segments: Segment[], profiles: Profile | Profile[]): string[] {
   const warnings: string[] = [];
   if (segments.some(s => s.fallback)) warnings.push('一部区間を取得できませんでした。該当区間は直線で表示しています。');
   if (segments.some(s => s.standardProfile)) warnings.push('日本向け設定を使えず標準設定で計算しました');
-  const requested = CONFIG.profiles[profile];
-  const alternatives = [...new Set(segments.filter(s => !s.fallback && s.profileUsed && s.profileUsed !== requested.custom && s.profileUsed !== requested.api).map(s => s.profileUsed))];
+  const alternatives = [...new Set(segments.filter((s, i) => {
+    const requested = CONFIG.profiles[typeof profiles === 'string' ? profiles : profiles[i]];
+    return !s.fallback && s.profileUsed && s.profileUsed !== requested.custom && s.profileUsed !== requested.api;
+  }).map(s => s.profileUsed))];
   if (alternatives.length) warnings.push(`一部区間を代替経路(${alternatives.join(', ')})で計算しました`);
   return warnings;
 }

@@ -5,14 +5,17 @@ const STORAGE_KEY = 'route-builder:v1';
 export function validateState(value: unknown): RouteState {
   const s = value as RouteState;
   if (!s || typeof s.name !== 'string' || s.name.length > 200 || !Object.hasOwn(CONFIG.profiles, s.profile) || typeof s.followRoad !== 'boolean' || !Array.isArray(s.points) || s.points.length > 200 || !s.points.every(p => p && validPoint(p))) throw new Error('ルートデータの形式が不正です');
+  const count = Math.max(0, s.points.length - 1);
+  const legProfiles = s.legProfiles === undefined ? Array(count).fill(s.profile) : s.legProfiles;
+  if (!Array.isArray(legProfiles) || legProfiles.length !== count || !legProfiles.every(p => typeof p === 'string' && Object.hasOwn(CONFIG.profiles, p))) throw new Error('区間の走り方が不正です');
   if (s.importedTrack && (!Array.isArray(s.importedTrack) || s.importedTrack.length > 100000 || !s.importedTrack.every(p => p && validPoint(p) && (p.ele == null || Number.isFinite(p.ele))))) throw new Error('GPXの点データが不正です');
   if (s.importedPlaces && (!Array.isArray(s.importedPlaces) || s.importedPlaces.length > 10000 || !s.importedPlaces.every(p => p && validPoint(p) && typeof p.name === 'string' && Number.isFinite(p.routeDistance) && Number.isFinite(p.offset) && Number.isFinite(p.id) && (p.kind === 'pass' || p.kind === 'peak') && (p.ele == null || Number.isFinite(p.ele))))) throw new Error('GPX地物の形式が不正です');
-  return { name: s.name, profile: s.profile, followRoad: s.followRoad, points: s.points.map(cleanPoint), ...(s.importedTrack ? { importedTrack: s.importedTrack.map(cleanPoint), importedPlaces: s.importedPlaces } : {}) };
+  return { name: s.name, profile: s.profile, legProfiles: [...legProfiles], followRoad: s.followRoad, points: s.points.map(cleanPoint), ...(s.importedTrack ? { importedTrack: s.importedTrack.map(cleanPoint), importedPlaces: s.importedPlaces } : {}) };
 }
 function cleanPoint(p: Point): Point { return { lat: p.lat, lng: p.lng, ...(Number.isFinite(p.ele) ? { ele: p.ele } : {}) }; }
 export function encodeRoute(state: RouteState): string {
   const s = validateState({ ...state, importedTrack: undefined, importedPlaces: undefined });
-  const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, ...s }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ v: 2, ...s }));
   return '#route=' + btoa(Array.from(bytes, b => String.fromCharCode(b)).join('')).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 export function decodeRoute(hash: string): RouteState {
@@ -20,8 +23,9 @@ export function decodeRoute(hash: string): RouteState {
   try {
     const bytes = Uint8Array.from(atob(hash.slice(7).replaceAll('-', '+').replaceAll('_', '/')), c => c.charCodeAt(0));
     const data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (data.v !== 1) throw new Error('version');
-    return validateState(data);
+    if (data.v !== 1 && data.v !== 2) throw new Error('version');
+    if (data.v === 2 && !Array.isArray(data.legProfiles)) throw new Error('legProfiles');
+    return validateState(data.v === 1 ? { ...data, legProfiles: undefined } : data);
   } catch { throw new Error('共有URLを読み込めませんでした'); }
 }
 // Consume a shared snapshot once so subsequent reloads restore the user's edits.
