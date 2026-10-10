@@ -24,6 +24,13 @@ export function decodeRoute(hash: string): RouteState {
     return validateState(data);
   } catch { throw new Error('共有URLを読み込めませんでした'); }
 }
+// Consume a shared snapshot once so subsequent reloads restore the user's edits.
+export function consumeSharedRoute(): RouteState | null {
+  if (!window.location.hash.startsWith('#route=')) return null;
+  const state = decodeRoute(window.location.hash);
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  return state;
+}
 export function saveRoute(state: RouteState): boolean {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(validateState(state))); return true; } catch { return false; }
 }

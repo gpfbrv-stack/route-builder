@@ -38,6 +38,8 @@ Node.js 22.12以上（開発時24）で `npm install` → `npm run dev`。
 5. ルート名を入力し、計算完了後「GPX保存」。GPXを再読込すると形状・標高を保持します。経由点等を編集した時点で道路探索を再実行します。
 6. 共有URLには経由点・プロファイル・直線設定・名称のみ含みます。受信側で再計算するため、GPXの完全な形状保持にはGPXファイルを使います。URLには位置情報が含まれます。
 
+共有URLは読込後にハッシュを取り除きます。その後の再読込は自動保存した編集内容を復元します。
+
 ## 設定と制限
 
 `src/config.ts` にプロファイルと閾値を集約しています。山サイ=mtb、グラベル=gravel、ロード=fastbike。BRouterは500ms待機・同時2リクエスト、成功区間を512件メモリ保存。失敗区間は直線＋通知で代替し、失敗を永久キャッシュしません。
@@ -98,5 +100,100 @@ Viteの `VITE_` 変数はブラウザ配信コードに含まれます。サー�
 - GPX: ブラウザで出力→読込→再出力、SHA-256一致。読込後は再計算せず元の形状を表示。
 - Google: キーなしで選択肢なし／通信なし。模擬応答では3種類の切替、ロゴ、copyright、ズーム12のタイルを13以上で拡大、403時の地理院復帰を確認。実キー・実Google画像での検証は未実施。
 - 検証中の修正: ブラウザfetchのthis束縛不具合、テストデータの型エラー、ラジオボタンへの過大な入力欄CSS。Overpassは一度504応答、再編集時の再取得は200応答。
+- 最終再読込テストで共有URLが自動保存より優先される不具合を再現し、共有データを一度だけ消費する修正と回帰テストを追加しました。
 
 実通信先はBRouter、Overpass、地理院タイル、OSMタイル、キー設定時のみtile.googleapis.com。Googleロゴ・Leaflet画像は同梱、外部フォント通信なし。
+
+## タスク別の変更ファイル
+
+以下はリポジトリルートからの相対パス。各コミット直前に npm test と npm run build が成功。
+
+### 40c1962 feat(T1): scaffold attributed Leaflet basemaps and Vitest
+
+- `.gitignore`
+- `H_README.md`
+- `index.html`
+- `package-lock.json`
+- `package.json`
+- `src/config.test.ts`
+- `src/config.ts`
+- `src/main.ts`
+- `src/map.ts`
+- `src/style.css`
+- `tsconfig.json`
+
+### 394db3f feat(T2): edit waypoints and cache rate-limited route segments
+
+- `src/async.ts`
+- `src/config.ts`
+- `src/geo.test.ts`
+- `src/geo.ts`
+- `src/main.ts`
+- `src/routing.test.ts`
+- `src/routing.ts`
+- `src/state.ts`
+- `src/style.css`
+- `src/types.ts`
+
+### 6004d43 feat(T3): sample GSI DEM and chart hysteresis elevation stats
+
+- `src/chart.ts`
+- `src/config.ts`
+- `src/dem.ts`
+- `src/elevation.test.ts`
+- `src/elevation.ts`
+- `src/main.ts`
+- `src/style.css`
+
+### d1fc2fb feat(T4): discover and label nearby passes and peaks
+
+- `src/config.ts`
+- `src/geo.ts`
+- `src/main.ts`
+- `src/places.test.ts`
+- `src/places.ts`
+- `src/types.ts`
+
+### 3cbe7cf feat(T5): preserve GPX round trips and add autosave and sharing
+
+- `src/gpx.test.ts`
+- `src/gpx.ts`
+- `src/main.ts`
+- `src/persistence.test.ts`
+- `src/persistence.ts`
+- `src/types.ts`
+
+### 2ba0e98 feat(T6): responsive draggable route panel and browser-verified UI
+
+- `H_README.md`
+- `index.html`
+- `package.json`
+- `src/main.ts`
+- `src/panel.ts`
+- `src/places.ts`
+- `src/routing.test.ts`
+- `src/routing.ts`
+- `src/style.css`
+
+### 69d9529 feat(T7): add optional official Google Map Tiles basemaps
+
+- `.env.example`
+- `.gitignore`
+- `H_README.md`
+- `public/GOOGLE_ATTRIBUTION_NOTICE.txt`
+- `public/google-maps.svg`
+- `src/google-layer.ts`
+- `src/google.test.ts`
+- `src/google.ts`
+- `src/main.ts`
+- `src/map.ts`
+- `src/style.css`
+
+### 共有URL後の自動保存修正（本書を含む最終コミット）
+
+- `src/persistence.ts`
+- `src/persistence.test.ts`
+- `src/main.ts`
+- `H_README.md`
+
+最終検証: npm test = 8ファイル・26テスト成功、npm run build = 型検査とViteビルド成功。git diff --check 成功。git grepでGoogleキー形式と秘密鍵ヘッダーの一致なし、.env.local はgit check-ignoreで対象外を確認。

@@ -13,7 +13,7 @@ import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
 import { generateGPX, parseGPX, gpxFilename } from './gpx';
-import { encodeRoute, decodeRoute, loadRoute, saveRoute } from './persistence';
+import { encodeRoute, consumeSharedRoute, loadRoute, saveRoute } from './persistence';
 import { cumulativeDistances } from './geo';
 import { installPanel } from './panel';
 
@@ -191,10 +191,10 @@ $('share').onclick = async () => {
 };
 window.addEventListener('hashchange', () => {
   if (!location.hash.startsWith('#route=')) return;
-  try { change(decodeRoute(location.hash), true); $('fit').click(); } catch (error) { notify((error as Error).message); }
+  try { const shared = consumeSharedRoute(); if (shared) { change(shared, true); $('fit').click(); } } catch (error) { notify((error as Error).message); }
 });
 let startupError = '';
-try { history.value = location.hash.startsWith('#route=') ? decodeRoute(location.hash) : loadRoute() ?? history.value; } catch (error) { history.value = loadRoute() ?? history.value; startupError = (error as Error).message; }
+try { history.value = consumeSharedRoute() ?? loadRoute() ?? history.value; } catch (error) { history.value = loadRoute() ?? history.value; startupError = (error as Error).message; }
 render();
 if (history.value.points.length) $('fit').click();
 if (startupError) $('storage-status').textContent = startupError;
