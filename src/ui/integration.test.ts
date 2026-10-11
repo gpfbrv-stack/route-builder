@@ -95,10 +95,17 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   await vi.runAllTimersAsync();
   expect(parseGPX(await partialXml).places.map(p => p.name)).toEqual(['花脊峠']);
   created.mockClear();
+  // jsdom is not a coarse-pointer device: Garmin shares FITs only on (pointer: coarse), so emulate touch around Garmin clicks.
+  const withTouchPointer = async (click: () => void) => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ ...originalMatchMedia.call(window, q), matches: q === '(pointer: coarse)' ? true : originalMatchMedia.call(window, q).matches })) as typeof window.matchMedia;
+    try { click(); await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(0); }
+    finally { window.matchMedia = originalMatchMedia; }
+  };
   const partialShare = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
   Object.defineProperty(navigator, 'share', { configurable: true, value: partialShare });
-  button('#garmin').click(); await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(0);
+  await withTouchPointer(() => button('#garmin').click());
   expect(partialShare).toHaveBeenCalledOnce();
   expect(document.querySelector('.toast')!.textContent).toBe('峠・補給地点の一部は取得中のため含まれていません');
   finishOsm(new Response(JSON.stringify({ elements: [
@@ -218,19 +225,19 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
     expect(decoder.isFIT()).toBe(true); expect(decoder.checkIntegrity()).toBe(true);
     const result = decoder.read(); expect(result.errors).toEqual([]); return result.messages;
   };
-  button('#garmin').click();
+  await withTouchPointer(() => button('#garmin').click());
   const fit = await sharedFit();
   expect(fit.courseMesgs![0].subSport).toBe('mountain'); expect(fit.recordMesgs).toHaveLength(2);
   expect(fit.coursePointMesgs!.map(p => p.type)).toEqual(['summit', 'store']);
-  button('#poi-gpx').click(); button('.peek-row [data-action="garmin"]').click();
+  button('#poi-gpx').click(); await withTouchPointer(() => button('.peek-row [data-action="garmin"]').click());
   expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']);
-  button('#poi-gpx').click(); convChip.click(); button('#garmin').click();
+  button('#poi-gpx').click(); convChip.click(); await withTouchPointer(() => button('#garmin').click());
   expect((await sharedFit()).coursePointMesgs!.map(p => p.type)).toEqual(['summit']); convChip.click();
   fitShare.mockRejectedValueOnce(new DOMException('cancel', 'AbortError'));
   const noticeBeforeCancel = document.getElementById('status')!.textContent;
-  button('#garmin').click(); await settle();
+  await withTouchPointer(() => button('#garmin').click()); await settle();
   expect(document.getElementById('status')!.textContent).toBe(noticeBeforeCancel);
-  fitShare.mockRejectedValueOnce(new Error('share failed')); button('#garmin').click(); await settle();
+  fitShare.mockRejectedValueOnce(new Error('share failed')); await withTouchPointer(() => button('#garmin').click()); await settle();
   expect(document.getElementById('status')!.textContent).toContain('FITを送信・保存できませんでした');
   expectExportsDisabled(false);
   // All mode selectors affect only new legs; redrawing preserves profiles and is undoable.
@@ -249,12 +256,12 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.getElementById('status')!.classList.contains('warn')).toBe(false);
   expect(document.querySelector('.leaflet-control-attribution')!.textContent).toContain('道路中心線: 地理院タイル');
   // GSI-only FIT falls back to the current profile even though the leg retains road.
-  button('.m-top [data-profile="gravel"]').click(); button('#garmin').click();
+  button('.m-top [data-profile="gravel"]').click(); await withTouchPointer(() => button('#garmin').click());
   expect((await sharedFit()).courseMesgs![0].subSport).toBe('gravelCycling');
   // A short road leg determines FIT subSport despite the longer GSI leg.
   button('.m-top [data-profile="mtb"]').click(); button('#menu-pop [data-mode="road"]').click();
   captured.map!.fire('click', { latlng: { lat: 35.1601, lng: 135.789 } }); await settle();
-  expect(state().legMode).toEqual(['gsi', 'road']); button('#garmin').click();
+  expect(state().legMode).toEqual(['gsi', 'road']); await withTouchPointer(() => button('#garmin').click());
   expect((await sharedFit()).courseMesgs![0].subSport).toBe('mountain');
   button('#undo').click(); button('#undo').click(); await settle();
   expect(state().legMode).toEqual(beforeGsi.legMode);
