@@ -131,6 +131,10 @@ FITの生成は `fit.ts`、共有・ダウンロードと取り込み手順は `
 3. `npm run dev` を再起動します。本番は `npm run build` を再実行します。
 4. レイヤー選択に「Google 道路／航空写真／地形」が現れます。
 
+「重ねる」の「Googleの施設・地名」は既定ONで、選択を端末に保存します。地理院・OSM背景にGoogleの施設アイコン・地名だけを重ねます。ズーム13未満ではGoogleへの取得を止め、Google背景では「Google背景では不要」として無効になります。低ズームでは地物が間引かれるため、山頂などが見えない場合はズーム15以上へ拡大してください。
+
+重ね表示は専用ペイン（zIndex 250）に置き、ルート・マーカーの操作を妨げません。Google Mapsロゴと「Google: …（施設・地名）」の帰属を背景の帰属と区切って表示します。取得失敗時は重ね表示だけを外し、背景を維持します。再度ONにすると再試行します（失敗による解除は保存した選択を変えません）。スタイルは `src/config.ts` の `CONFIG.google.poiOverlayStyles`、セッション種別は `poiOverlay` です。
+
 Viteの `VITE_` 変数はブラウザ配信コードに含まれます。サーバー秘密鍵として隠せる仕組みではありません。Google Cloud側でHTTPリファラーとMap Tiles APIにキーを制限し、利用枠・課金を管理してください。`.env.local` と `dist/` はGit対象外です。キーを含むネットワークログもコミットしないでください。
 
 設定は `src/google.ts` の `GOOGLE` に集約。既定は `scaleFactor2x` / `highDpi:true`。1xにする場合は `scaleFactor1x` / `highDpi:false` に変更。APIが512px画像を返しても地理的範囲は同じなので、LeafletのCSSタイルサイズは256pxです。
@@ -152,7 +156,7 @@ Viteの `VITE_` 変数はブラウザ配信コードに含まれます。サー�
 2. 航空写真・地形へ切替。terrainのbodyにlayerRoadmapがあり、copyrightが更新され、Google Mapsロゴが見えることを確認。
 3. パン・ズームでviewportを再取得し、上限以上ではタイルURLのzが増えず拡大表示されることを確認。375px画面でもロゴ・copyrightがパネルに隠れないことを確認。
 4. 同じ地図種別へ戻った時に有効なセッションが再利用されることを確認。localStorageのexpiryを現在Unix秒+3599に変更して再読込すると再作成されます。
-5. 地理院へ戻るとGoogleロゴ・copyrightが消え、地理院出典になることを確認。
+5. 重ね表示をOFFにして地理院へ戻るとGoogleロゴ・copyrightが消え、地理院出典になることを確認。重ね表示ON・ズーム13以上では、施設・地名用のGoogleロゴ・copyrightが地理院出典と併記されます。
 
 ## 実施済み検証
 

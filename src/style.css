@@ -144,6 +144,12 @@ details[open] .chev { transform: rotate(180deg); }
 /* レイヤー選択 */
 .layer-pop { position: absolute; top: 0; right: 52px; width: 248px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp1); display: none; }
 .layer-pop.open { display: block; }
+.google-poi-options { border-top: 1px solid var(--divider); padding-top: 8px; }
+.google-poi-options .check-row { margin: 8px; align-items: flex-start; }
+.google-poi-options .check-row span { min-width: 0; overflow-wrap: anywhere; }
+.google-poi-options small { display: block; font-size: 12px; }
+.google-poi-options input:disabled + span { color: var(--text-2); opacity: .65; }
+.google-poi-attribution { display: inline-block; border-left: 1px solid var(--border); padding-left: 8px; }
 .layer-pop h3 { font-size: 12px; color: var(--text-2); font-weight: 500; margin: 4px 8px; }
 .layer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: var(--sp1); }
 .layer-grid button { border: 2px solid transparent; border-radius: var(--radius); background: transparent; padding: 4px; font-size: 12px; cursor: pointer; display: grid; gap: 2px; justify-items: center; }
