@@ -1,6 +1,12 @@
 export const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
 export const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>';
 export const CONFIG = {
+  google: { poiOverlayStyles: [
+    { stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi', stylers: [{ visibility: 'on' }] },
+    { featureType: 'poi', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+    { featureType: 'landscape.natural', elementType: 'labels', stylers: [{ visibility: 'on' }] },
+  ] },
   overpass: { endpoints: ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], timeoutMs: 30000 },
   gsiPlaces: { zoom: 15, concurrency: 4, cacheSize: 200, tileLimit: 80, timeoutMs: 15000, marginDegrees: 0.003 },
   gsi: { tileLimit: 300, bridgeM: 30, bridgePenalty: 3, detourRatio: 2.5, detourExtraM: 1000 },

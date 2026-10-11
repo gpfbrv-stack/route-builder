@@ -22,6 +22,8 @@ import { drawChart } from './chart';
 import { surfaceSpans, surfaceSummary, unknownSurface, type SurfaceSpan } from './surface';
 import { installChartMode } from './ui/chart-mode';
 import { generateGPX, parseGPX, gpxFilename } from './gpx';
+import { detectImportFormat, extractKmz, MAX_PIN_BYTES, parseKml, parsePinGeoJson } from './pins';
+import { installPinsUI } from './ui/pins';
 import { encodeRoute, consumeSharedRoute, loadRoute, saveRoute } from './persistence';
 import { cumulativeDistances } from './geo';
 import { installPanel } from './panel';
@@ -318,13 +320,25 @@ document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
 });
 $('import').onclick = () => $<HTMLInputElement>('file').click();
+const pinsUI = installPinsUI(map, point => change(insertWaypoint(history.value, history.value.points.length, point)),
+  message => status.set('pin-storage', message, 'warn'));
 $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
-    if (file.size > 20_000_000) throw new Error('GPXは20MBまでです');
-    const imported = parseGPX(await file.text(), history.value.profile, history.value.mode); change(imported.state, true);
-    $('fit').click();
-  } catch (error) { notify(error instanceof Error ? error.message : 'GPXを読み込めませんでした', 'warn'); }
+    if (file.size > MAX_PIN_BYTES) throw new Error('ファイルは20MBまでです');
+    const content = /\.kmz$/i.test(file.name) ? new Uint8Array(await file.arrayBuffer()) : await file.text();
+    const format = detectImportFormat(file.name, content);
+    const textContent = typeof content === 'string' ? content : format === 'kmz' ? '' : new TextDecoder().decode(content);
+    if (format === 'gpx') {
+      const imported = parseGPX(textContent, history.value.profile, history.value.mode); change(imported.state, true);
+      $('fit').click();
+    } else {
+      const imported = format === 'geojson' ? parsePinGeoJson(textContent)
+        : parseKml(format === 'kmz' ? await extractKmz(content instanceof Uint8Array ? content : new Uint8Array(await file.arrayBuffer())) : textContent);
+      pinsUI.import(file.name, imported.pins);
+      notify(`ピンを${imported.pins.length}件読み込みました(${imported.skipped}件はスキップ)`);
+    }
+  } catch (error) { notify(error instanceof Error ? error.message : 'ファイルを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
 };
 $('export').onclick = () => {

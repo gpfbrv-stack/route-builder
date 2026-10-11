@@ -1,4 +1,6 @@
+import { CONFIG } from './config';
 export type GoogleMapType = 'roadmap' | 'satellite' | 'terrain';
+export type GoogleSessionType = GoogleMapType | 'poiOverlay';
 export interface GoogleSettings { scale: 'scaleFactor1x' | 'scaleFactor2x'; highDpi: boolean }
 export interface GoogleSession { session: string; expiry: string; tileWidth: number; tileHeight: number }
 export interface Bounds { north: number; south: number; east: number; west: number }
@@ -7,8 +9,11 @@ export const GOOGLE = { scale: 'scaleFactor2x', highDpi: true, debounceMs: 400 }
 export function sessionValid(session: GoogleSession | null | undefined, nowMs = Date.now()): boolean {
   return !!session && typeof session.session === 'string' && session.session.length > 0 && Number.isFinite(Number(session.expiry)) && Number(session.expiry) * 1000 - 3600000 > nowMs;
 }
-export function sessionBody(mapType: GoogleMapType, settings: GoogleSettings = GOOGLE) {
-  return { mapType, language: 'ja-JP', region: 'JP', scale: settings.scale, highDpi: settings.highDpi, ...(mapType === 'terrain' ? { layerTypes: ['layerRoadmap'] } : {}) };
+export function sessionBody(mapType: GoogleSessionType, settings: GoogleSettings = GOOGLE) {
+  return { mapType: mapType === 'poiOverlay' ? 'satellite' : mapType, language: 'ja-JP', region: 'JP', scale: settings.scale, highDpi: settings.highDpi,
+    ...(mapType === 'terrain' ? { layerTypes: ['layerRoadmap'] } : {}),
+    ...(mapType === 'poiOverlay' ? { layerTypes: ['layerRoadmap'], overlay: true, imageFormat: 'png', styles: CONFIG.google.poiOverlayStyles } : {}),
+  };
 }
 export function viewportBounds(bounds: Bounds): Bounds {
   if (!Object.values(bounds).every(Number.isFinite) || bounds.north < bounds.south || bounds.east < bounds.west && bounds.west - bounds.east > 360) throw new Error('Invalid viewport bounds');
@@ -40,7 +45,7 @@ export class GoogleSessions {
   private memory = new Map<string, GoogleSession>();
   private pending = new Map<string, Promise<GoogleSession>>();
   constructor(private key: string, private settings: GoogleSettings = GOOGLE, private request: typeof fetch = (...args) => fetch(...args)) {}
-  get(type: GoogleMapType): Promise<GoogleSession> {
+  get(type: GoogleSessionType): Promise<GoogleSession> {
     const cacheKey = `route-builder:google:${keyFingerprint(this.key)}:${type}:${this.settings.scale}:${this.settings.highDpi}`;
     let session = this.memory.get(cacheKey);
     if (!session) { try { session = JSON.parse(localStorage.getItem(cacheKey) ?? 'null'); } catch { /* storage denied */ } }

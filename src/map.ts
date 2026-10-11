@@ -2,16 +2,20 @@ import L from 'leaflet';
 import { BASE_LAYERS } from './config';
 import { addGoogleLayers } from './google-layer';
 import { installPopover } from './ui/popover';
+import { installGooglePoi } from './ui/google-poi';
 
 export function createMap(element: string, notify: (message: string) => void = () => {}) {
   const map = L.map(element, { zoomControl: false, doubleClickZoom: false }).setView([35.1615, 135.7590], 13);
   L.control.scale({ imperial: false }).addTo(map);
   const layers: Record<string, L.Layer> = Object.fromEntries(BASE_LAYERS.map(config => [config.name, L.tileLayer(config.url, { maxZoom: 19, maxNativeZoom: config.maxNativeZoom, attribution: config.attribution })]));
   let current: L.Layer | undefined;
+  let googlePoi: ReturnType<typeof installGooglePoi> | undefined;
   const buttons = new Map<string, HTMLButtonElement>();
   const select = (name: string) => {
     if (!layers[name]) return;
-    current?.remove(); current = layers[name]; current.addTo(map);
+    current?.remove(); current = layers[name];
+    googlePoi?.setBackground(name.startsWith('Google'));
+    current.addTo(map);
     buttons.forEach((button, key) => button.setAttribute('aria-pressed', String(key === name)));
     try { localStorage.setItem('route-builder-background', name); } catch { /* Selection works without storage. */ }
   };
@@ -33,6 +37,7 @@ export function createMap(element: string, notify: (message: string) => void = (
   };
   group('地理院', ['地理院 淡色', '地理院 標準', '地理院 写真', '地理院 陰影起伏']);
   group('その他', ['OpenStreetMap']); group('Google', Object.keys(layers).filter(n => n.startsWith('Google')));
+  googlePoi = installGooglePoi(map, pop, notify);
   installPopover(document.getElementById('layer-btn') as HTMLButtonElement, pop);
   let saved = ''; try { saved = localStorage.getItem('route-builder-background') ?? ''; } catch { /* Default below. */ }
   select(layers[saved] ? saved : '地理院 淡色');

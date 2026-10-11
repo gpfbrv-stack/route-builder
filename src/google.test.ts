@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import L from 'leaflet';
+import { CONFIG } from './config';
 import { GoogleLayer } from './google-layer';
 import { GoogleSessions, sessionValid, sessionBody, viewportBounds, viewportParams, nativeZoom, type GoogleViewport } from './google';
 const session = (seconds: number) => ({ session: 'test-session', expiry: String(seconds), tileWidth: 512, tileHeight: 512 });
@@ -144,6 +145,34 @@ it('deduplicates sessions, separates map types, and reuses localStorage', async 
   await client.get('terrain'); expect(fetcher).toHaveBeenCalledTimes(2);
   await new GoogleSessions('test-key', undefined, fetcher).get('roadmap'); expect(fetcher).toHaveBeenCalledTimes(2);
   expect(fetcher.mock.calls[0]).toBeDefined();
+});
+it('requests transparent POI styles with the existing scale and DPI settings', () => {
+  expect(sessionBody('poiOverlay')).toEqual({ mapType: 'satellite', language: 'ja-JP', region: 'JP',
+    scale: 'scaleFactor2x', highDpi: true, layerTypes: ['layerRoadmap'], overlay: true, imageFormat: 'png',
+    styles: [
+      { stylers: [{ visibility: 'off' }] },
+      { featureType: 'poi', stylers: [{ visibility: 'on' }] },
+      { featureType: 'poi', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+      { featureType: 'landscape.natural', elementType: 'labels', stylers: [{ visibility: 'on' }] },
+    ],
+  });
+  expect(sessionBody('poiOverlay').styles).toBe(CONFIG.google.poiOverlayStyles);
+  expect(sessionBody('poiOverlay', { scale: 'scaleFactor1x', highDpi: false })).toMatchObject({ scale: 'scaleFactor1x', highDpi: false });
+});
+it('isolates overlay sessions from every background in memory and storage', async () => {
+  localStorage.clear();
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(init!.body as string);
+    return new Response(JSON.stringify({ ...session(Date.now() / 1000 + 7200), session: body.overlay ? 'overlay' : body.mapType }));
+  });
+  const client = new GoogleSessions('overlay-key', undefined, fetcher);
+  for (const type of ['roadmap', 'satellite', 'terrain', 'poiOverlay'] as const) {
+    expect((await client.get(type)).session).toBe(type === 'poiOverlay' ? 'overlay' : type);
+  }
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect((await new GoogleSessions('overlay-key', undefined, fetcher).get('poiOverlay')).session).toBe('overlay');
+  expect((await client.get('satellite')).session).toBe('satellite');
+  expect(fetcher).toHaveBeenCalledTimes(4);
 });
 it('survives unavailable localStorage, retries failed sessions, and renews expiry', async () => {
   localStorage.clear();

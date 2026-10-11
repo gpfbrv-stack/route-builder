@@ -7,7 +7,7 @@
   --success: #115a36; --warning: #ac3e00; --error: #ce0000;
   --focus-yellow: #ffd43d; --focus-black: #000000;
   /* ルート・勾配(地図/グラフ専用) */
-  --route: #0017c1; --route-casing: #ffffff;
+  --pin: #d93025; --route: #0017c1; --route-casing: #ffffff;
   --g0: #c5d7fb; --g3: #ffc94d; --g6: #ff8a2b; --g9: #d9361e; --g12: #7a0e0e; --gdown: #d9d9d9;
   --surf-paved: #8a94a6; --surf-unpaved: #b0763a; --surf-unknown: #d9d9d9;
   --radius: 8px; --sp1: 8px; --sp2: 16px; --sp3: 24px;
@@ -144,6 +144,12 @@ details[open] .chev { transform: rotate(180deg); }
 /* レイヤー選択 */
 .layer-pop { position: absolute; top: 0; right: 52px; width: 248px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp1); display: none; }
 .layer-pop.open { display: block; }
+.google-poi-options { border-top: 1px solid var(--divider); padding-top: 8px; }
+.google-poi-options .check-row { margin: 8px; align-items: flex-start; }
+.google-poi-options .check-row span { min-width: 0; overflow-wrap: anywhere; }
+.google-poi-options small { display: block; font-size: 12px; }
+.google-poi-options input:disabled + span { color: var(--text-2); opacity: .65; }
+.google-poi-attribution { display: inline-block; border-left: 1px solid var(--border); padding-left: 8px; }
 .layer-pop h3 { font-size: 12px; color: var(--text-2); font-weight: 500; margin: 4px 8px; }
 .layer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: var(--sp1); }
 .layer-grid button { border: 2px solid transparent; border-radius: var(--radius); background: transparent; padding: 4px; font-size: 12px; cursor: pointer; display: grid; gap: 2px; justify-items: center; }
@@ -290,3 +296,14 @@ button:disabled { opacity: .45; cursor: default; }
 .garmin-dialog p, .garmin-dialog ol { margin: 8px 0; }
 .garmin-dialog ol { padding-left: 24px; }
 .garmin-dialog .btn { margin-top: 8px; }
+
+/* Imported pins share the existing light theme and focus treatment. */
+.layer-pop { max-height: min(70dvh, 560px); overflow-y: auto; overscroll-behavior: contain; }
+.pin-sources { border-top: 1px solid var(--divider); margin-top: 8px; padding-top: 8px; }
+.pin-source { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.pin-source label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.pin-source input { flex: none; }
+.pin-delete { flex: none; min-height: 40px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; }
+.pin-popup { display: grid; gap: 8px; overflow-wrap: anywhere; }
+.pin-popup p { margin: 0; white-space: pre-wrap; }
+.pin-popup .btn { height: auto; min-height: 40px; padding: 8px; font-size: 14px; white-space: normal; }
