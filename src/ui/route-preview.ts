@@ -31,7 +31,7 @@ export class RoutePreview {
     const current = () => this.generation === job.generation;
     try {
       await this.router.route(job.state.points.slice(first, end + 1), job.state.legProfiles.slice(first, end), current,
-        (index, segment) => { if (current()) this.resolved(first + index, segment); }, job.state.legMode.slice(first, end));
+        (index, segment) => { if (current()) this.resolved(first + index, segment); }, job.state.legMode.slice(first, end), job.state.legPrefer?.slice(first, end));
     } finally {
       this.busy = false;
       if (this.latest && !current()) this.schedule();

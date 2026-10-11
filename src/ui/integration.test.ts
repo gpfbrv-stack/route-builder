@@ -7,7 +7,9 @@ import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
 import { PIN_STORAGE_KEY } from '../pins';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false, gsiWait: undefined as Promise<Place[]> | undefined }));
+import type { RouteState } from '../types';
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false, gsiWait: undefined as Promise<Place[]> | undefined,
+  highway: undefined as string | undefined, routeWait: undefined as Promise<void> | undefined, preferences: [] as (string[] | undefined)[] }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
@@ -20,10 +22,13 @@ vi.mock('../routing', async importOriginal => {
     detour: InstanceType<typeof actual.Router>['detour'] = async (a, b, profile, mode) => captured.detour && mode === 'road'
       ? { key: actual.segmentKey(a, b, profile), osmM: 4500, gsiM: 1200 } : undefined;
     cached = () => undefined;
-    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes) => {
+    route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes, prefers) => {
       captured.routeCalls++;
+      captured.preferences.push(prefers);
+      const highway = captured.highway;
+      if (captured.routeWait) await captured.routeWait;
       return points.slice(1).map((p, i) => {
-        const segment = { points: [points[i], { ...p, surface: modes?.[i] === 'road' ? 'paved' as const : undefined }], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi' };
+        const segment = { points: [points[i], { ...p, surface: modes?.[i] === 'road' ? 'paved' as const : undefined }], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi', startHighway: highway, endHighway: highway };
         if (current()) resolved?.(i, segment);
         return segment;
       });
@@ -295,7 +300,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   button('#clear').click(); expect(state().points).toHaveLength(0); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   captured.map!.fire('click', { latlng: { lat: 35.15, lng: 135.78 } }); await settle();
   expect(document.querySelector('[data-waypoint="2"] .sub')!.textContent).not.toMatch(/^0\.0 km/);
-  for (let i = 0; i < 3; i++) osmFetch.mockResolvedValueOnce(new Response('rate_limited', { status: 429 }));
+  for (let i = 0; i < 2; i++) osmFetch.mockResolvedValueOnce(new Response('rate_limited', { status: 429 }));
   const beforeRetry = osmFetch.mock.calls.length;
   captured.map!.fire('click', { latlng: { lat: 35.16, lng: 135.79 } });
   await vi.advanceTimersByTimeAsync(1700);
@@ -312,9 +317,9 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelector('.toast')!.textContent).toBe('URLを表示しました。選択してコピーしてください');
   expect(document.getElementById('share-url')!.hidden).toBe(false);
   await vi.advanceTimersByTimeAsync(29999);
-  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 3);
+  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 2);
   await vi.advanceTimersByTimeAsync(1);
-  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 4);
+  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 3);
   expect(document.getElementById('status')!.textContent).not.toContain('Overpassが混雑中');
   expect(button('#export').disabled).toBe(false);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
@@ -455,4 +460,89 @@ it('wires the mobile share action to native sharing, silent cancellation and cli
   share.mockRejectedValueOnce(new Error('denied'));
   button.click(); await vi.advanceTimersByTimeAsync(0);
   expect(document.querySelector('.toast')!.textContent).toBe('共有URLをコピーしました');
+});
+
+it('switches preferences from the leg menu, persists labels, preserves on redraw and undoes once', async () => {
+  const initial: RouteState = { name: '優先設定', profile: 'gravel', mode: 'road', points: [{ lat: 36, lng: 138 }, { lat: 36.01, lng: 138 }],
+    legProfiles: ['gravel'], legMode: ['road'], legPrefer: ['main'] };
+  window.history.replaceState(null, '', encodeRoute(initial)); window.dispatchEvent(new HashChangeEvent('hashchange'));
+  await vi.advanceTimersByTimeAsync(2100);
+  const state = () => JSON.parse(localStorage.getItem('route-builder:v1')!);
+  const menuButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.waypoint-actions button')].find(b => b.textContent === label)!;
+  menuButton('脇道優先にする').click(); await vi.advanceTimersByTimeAsync(2100);
+  expect(state().legPrefer).toEqual(['side']);
+  expect(document.querySelector('.leg-profile')!.textContent).toContain('グラベル・脇道優先');
+  menuButton('主要道優先にする').click(); expect(state().legPrefer).toEqual(['main']);
+  document.getElementById('undo')!.click(); expect(state().legPrefer).toEqual(['side']);
+  document.getElementById('reprofile-all')!.click(); expect(state().legPrefer).toEqual(['side']);
+  document.getElementById('undo')!.click(); document.getElementById('undo')!.click();
+  expect(state()).toEqual(initial); await vi.advanceTimersByTimeAsync(2100);
+});
+
+it('automatically prefers side roads for clicks, line insertion and waypoint moves in the same Undo step', async () => {
+  const leaflet = (await import('leaflet')).default;
+  const state = (): RouteState => JSON.parse(localStorage.getItem('route-builder:v1')!);
+  const settle = () => vi.advanceTimersByTimeAsync(2100);
+  const undo = () => document.getElementById('undo')!.click();
+  const load = async (value: RouteState) => {
+    window.history.replaceState(null, '', encodeRoute(value)); window.dispatchEvent(new HashChangeEvent('hashchange')); await settle();
+  };
+  const move = (index: number, lat: number) => {
+    const markers: L.Marker[] = [];
+    captured.map!.eachLayer(layer => { if (layer instanceof leaflet.Marker && layer.getElement()?.querySelector('.wp-marker')) markers.push(layer); });
+    markers[index].setLatLng([lat, 138]).fire('dragend');
+  };
+  const initial: RouteState = { name: '自動優先', profile: 'gravel', mode: 'road', points: [{ lat: 36, lng: 138 }, { lat: 36.01, lng: 138 }],
+    legProfiles: ['gravel'], legMode: ['road'], legPrefer: ['main'] };
+  captured.highway = 'tertiary';
+  await load(initial);
+  expect(state()).toEqual(initial); // Shared URLs never trigger detection.
+  const before = captured.routeCalls;
+  captured.map!.fire('click', { latlng: { lat: 36.02, lng: 138 } }); await settle();
+  expect(state().legPrefer).toEqual(['main', 'side']);
+  expect(captured.preferences.slice(-2)).toEqual([['main', 'main'], ['main', 'side']]);
+  expect(captured.routeCalls).toBe(before + 2); // Only one automatic pass.
+  expect(document.getElementById('status')!.textContent).toContain('経由点が脇道上にあるため、前後の区間を脇道優先で計算しました');
+  undo(); await settle(); expect(state()).toEqual(initial); // Undo does not re-detect.
+
+  const start = captured.map!.latLngToContainerPoint([36.005, 138]);
+  for (const [type, delta] of [['pointerdown', 0], ['pointermove', 30], ['pointerup', 30]] as const) {
+    const event = new MouseEvent(type, { clientX: start.x + delta, clientY: start.y + delta, button: 0, bubbles: true, cancelable: true });
+    Object.defineProperties(event, { pointerId: { value: 7 }, pointerType: { value: 'mouse' }, isPrimary: { value: true } });
+    (type === 'pointerdown' ? document.querySelector('.route-hit')! : document).dispatchEvent(event);
+  }
+  await settle(); expect(state().points).toHaveLength(3); expect(state().legPrefer).toEqual(['side', 'side']);
+  undo(); await settle(); expect(state()).toEqual(initial);
+
+  const three: RouteState = { ...initial, points: [...initial.points, { lat: 36.02, lng: 138 }], legProfiles: ['road', 'gravel'], legMode: ['road', 'road'], legPrefer: ['main', 'main'] };
+  await load(three); move(1, 36.011); await settle();
+  const side = state(); expect(side.legPrefer).toEqual(['side', 'side']);
+  captured.highway = 'secondary_link'; move(1, 36.012); await settle();
+  expect(state().legPrefer).toEqual(['main', 'main']);
+  undo(); await settle(); expect(state()).toEqual(side);
+  undo(); await settle(); expect(state()).toEqual(three);
+
+  // Ignore an obsolete calculation after Undo, and preserve a newer manual preference.
+  captured.highway = 'service';
+  let finish!: () => void; captured.routeWait = new Promise(resolve => { finish = resolve; });
+  move(1, 36.013); await vi.advanceTimersByTimeAsync(500);
+  undo(); captured.routeWait = undefined; finish(); await settle(); expect(state()).toEqual(three);
+  captured.routeWait = new Promise(resolve => { finish = resolve; });
+  move(1, 36.014); await vi.advanceTimersByTimeAsync(500);
+  const manual = [...document.querySelectorAll<HTMLButtonElement>('[data-waypoint="0"] .waypoint-actions button')].find(b => b.textContent === '脇道優先にする')!;
+  manual.click(); captured.routeWait = undefined; finish(); await settle();
+  expect(state().legPrefer).toEqual(['side', 'main']);
+
+  const file = { name: 'side.gpx', size: 100, text: async () => generateGPX(three, three.points) };
+  const input = document.getElementById('file') as HTMLInputElement;
+  Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change')); await settle();
+  expect(state().importedTrack).toHaveLength(3); expect(state().legPrefer!.every(p => p === 'main')).toBe(true);
+  captured.highway = undefined;
+});
+
+it('hides preference actions for MTB, GSI and straight legs', async () => {
+  const value: RouteState = { name: '対象外', profile: 'road', mode: 'road', points: [36, 36.01, 36.02, 36.03].map(lat => ({ lat, lng: 138 })),
+    legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'gsi', 'straight'], legPrefer: ['main', 'main', 'main'] };
+  window.history.replaceState(null, '', encodeRoute(value)); window.dispatchEvent(new HashChangeEvent('hashchange')); await vi.advanceTimersByTimeAsync(2100);
+  expect(document.querySelector('#waypoints')!.textContent).not.toContain('優先にする');
 });

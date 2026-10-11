@@ -1,10 +1,12 @@
 import road from './brouter-profiles/road-jp.brf?raw';
 import gravel from './brouter-profiles/gravel-jp.brf?raw';
+import roadSide from './brouter-profiles/road-jp-side.brf?raw';
+import gravelSide from './brouter-profiles/gravel-jp-side.brf?raw';
 import mtb from './brouter-profiles/mtb-jp.brf?raw';
 import trekking from './brouter-profiles/trekking-jp.brf?raw';
 import { CONFIG } from './config';
 
-const sources: Record<string, string> = { 'road-jp': road, 'gravel-jp': gravel, 'mtb-jp': mtb, 'trekking-jp': trekking };
+const sources: Record<string, string> = { 'road-jp': road, 'gravel-jp': gravel, 'road-jp-side': roadSide, 'gravel-jp-side': gravelSide, 'mtb-jp': mtb, 'trekking-jp': trekking };
 const validId = (id: unknown): id is string => typeof id === 'string' && /^custom_\d+$/.test(id);
 const storageKey = (key: string) => `brouter-profile:${key}`;
 

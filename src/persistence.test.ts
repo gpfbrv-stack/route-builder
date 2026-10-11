@@ -2,13 +2,29 @@
 import { expect, it, vi } from 'vitest';
 import { encodeRoute, decodeRoute, saveRoute, loadRoute, validateState, consumeSharedRoute } from './persistence';
 import type { RouteState } from './types';
-const state: RouteState = { name: '京都 🚲', points: [{ lat: 35.12345678, lng: 135.98765432 }], profile: 'road', legProfiles: [], legMode: [], mode: 'straight' };
-const mixed: RouteState = { ...state, points: [{ lat: 35, lng: 135 }, { lat: 35.1, lng: 135 }, { lat: 35.2, lng: 135 }], legProfiles: ['mtb', 'gravel'], legMode: ['road', 'gsi'] };
+const state: RouteState = { name: '京都 🚲', points: [{ lat: 35.12345678, lng: 135.98765432 }], profile: 'road', legProfiles: [], legMode: [], legPrefer: [], mode: 'straight' };
+const mixed: RouteState = { ...state, points: [{ lat: 35, lng: 135 }, { lat: 35.1, lng: 135 }, { lat: 35.2, lng: 135 }], legProfiles: ['mtb', 'gravel'], legMode: ['road', 'gsi'], legPrefer: ['main', 'main'] };
 const hashFor = (data: unknown) => '#route=' + btoa(Array.from(new TextEncoder().encode(JSON.stringify(data)), b => String.fromCharCode(b)).join(''));
-it('round trips v4 mixed leg profiles through sharing and storage', () => {
+it('persists mixed preferences in v5 and storage; v1-v4 always migrate to main', () => {
+  const value: RouteState = { ...mixed, legPrefer: ['side', 'main'] };
+  expect(decodeRoute(encodeRoute(value))).toEqual(value);
+  expect(saveRoute(value)).toBe(true); expect(loadRoute()).toEqual(value);
+  for (const v of [1, 2, 3, 4]) {
+    const loaded = decodeRoute(hashFor({ ...value, v, followRoad: true, legFollow: [true, true] }));
+    expect(loaded.legPrefer).toEqual(['main', 'main']);
+    expect(decodeRoute(encodeRoute(loaded))).toEqual(loaded);
+  }
+  localStorage.setItem('route-builder:v1', JSON.stringify({ ...mixed, legPrefer: undefined }));
+  expect(loadRoute()?.legPrefer).toEqual(['main', 'main']);
+});
+it.each([undefined, null, [], ['side'], ['side', 'bad'], ['main', true], ['main', 'side', 'main']])('rejects invalid v5 preferences (%s)', legPrefer => {
+  expect(() => decodeRoute(hashFor({ ...mixed, v: 5, legPrefer }))).toThrow();
+  if (legPrefer !== undefined) expect(() => validateState({ ...mixed, legPrefer })).toThrow();
+});
+it('round trips v5 mixed leg profiles through sharing and storage', () => {
   expect(decodeRoute(encodeRoute(mixed))).toEqual(mixed);
   const raw = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encodeRoute(mixed).slice(7).replaceAll('-', '+').replaceAll('_', '/')), c => c.charCodeAt(0))));
-  expect(raw.v).toBe(4); expect(raw.legMode).toEqual(['road', 'gsi']); expect(raw.legFollow).toBeUndefined(); expect(raw.followRoad).toBeUndefined(); expect(raw.legProfiles).toEqual(['mtb', 'gravel']);
+  expect(raw.v).toBe(5); expect(raw.legMode).toEqual(['road', 'gsi']); expect(raw.legFollow).toBeUndefined(); expect(raw.followRoad).toBeUndefined(); expect(raw.legProfiles).toEqual(['mtb', 'gravel']);
   expect(saveRoute(mixed)).toBe(true); expect(loadRoute()).toEqual(mixed);
 });
 it('migrates v1 URLs and old storage with the saved profile for every leg', () => {
@@ -24,7 +40,7 @@ it.each([undefined, null, [], ['road'], ['road', 'constructor'], ['road', 'road'
 });
 it('handles zero and one waypoint with no legs and rejects unknown versions', () => {
   for (const points of [[], state.points]) expect(decodeRoute(encodeRoute({ ...state, points })).legProfiles).toEqual([]);
-  expect(() => decodeRoute(hashFor({ ...mixed, v: 5 }))).toThrow();
+  expect(() => decodeRoute(hashFor({ ...mixed, v: 6 }))).toThrow();
 });
 it('round trips Unicode and coordinates in URL-safe format', () => {
   const hash = encodeRoute(state); expect(hash).toMatch(/^#route=[A-Za-z0-9_-]+$/);
@@ -71,7 +87,7 @@ it('migrates v3 mixed follow settings through v4 URLs and localStorage', () => {
   localStorage.setItem('route-builder:v1', JSON.stringify(legacy)); expect(loadRoute()).toEqual(expected);
 });
 it.each(['road', 'gsi', 'straight'] as const)('round trips all three modes and default %s in v4 and storage', mode => {
-  const value: RouteState = { ...mixed, mode, points: [...mixed.points, { lat: 35.3, lng: 135 }], legProfiles: ['mtb', 'gravel', 'road'], legMode: ['road', 'gsi', 'straight'] };
+  const value: RouteState = { ...mixed, mode, points: [...mixed.points, { lat: 35.3, lng: 135 }], legProfiles: ['mtb', 'gravel', 'road'], legMode: ['road', 'gsi', 'straight'], legPrefer: ['main', 'main', 'main'] };
   expect(decodeRoute(encodeRoute(value))).toEqual(value);
   expect(saveRoute(value)).toBe(true); expect(loadRoute()).toEqual(value);
 });
