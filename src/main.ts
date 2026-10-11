@@ -8,7 +8,7 @@ import { createMap } from './map';
 import { CONFIG, GSI_ATTRIBUTION, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
-import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile, legPreferences, supportsPreference, preferLeg, autoPreferWaypoint } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import { LEG_MODE_LABELS, type LegMode, type RouteState, type Point, type Place } from './types';
 import { filterPlaces, progressivePlaces } from './places';
@@ -141,20 +141,22 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   await progressivePlaces(gsi, osm, publish, current);
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: defaultLegMode('mtb') });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], legPrefer: [], mode: defaultLegMode('mtb') });
 const detours = new DetourSuggestions(router, status, $('waypoints'), () => history.value, change);
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
 function actionNotice(message: string, kind: StatusKind = 'info') { notify(message, kind); toast(message); }
 const partialExportMessage = '峠・補給地点の一部は取得中のため含まれていません';
-function change(next: RouteState, keepTrack = false) {
+const sideRoadMessage = '経由点が脇道上にあるため、前後の区間を脇道優先で計算しました';
+function change(next: RouteState, keepTrack = false, editedWaypoint?: number) {
   if (next.points.length > 200) { actionNotice('経由点は200点までです。', 'warn'); return; }
   const added = !keepTrack && next.points.length > history.value.points.length;
-  history.set(keepTrack ? next : { ...next, importedTrack: undefined, importedPlaces: undefined }); render();
+  next = { ...next, legPrefer: legPreferences(next) };
+  history.set(keepTrack ? next : { ...next, importedTrack: undefined, importedPlaces: undefined }); render(editedWaypoint);
   if (added) toast('経由点を追加しました');
 }
 function remove(index: number) { change(removeWaypoint(history.value, index)); toast('経由点を削除しました'); }
-const calculate = debounce(async (version: number) => {
+const calculate = debounce(async (version: number, editedWaypoint?: number, sideRoadNotice = false) => {
   if (version !== revision) return;
   const state = structuredClone(history.value);
   const detourCurrent = detours.current();
@@ -165,12 +167,22 @@ const calculate = debounce(async (version: number) => {
     notify('ルートを計算中…', 'busy');
     const segments = await router.route(points, state.legProfiles, () => version === revision, (index, segment) => {
       routeLine.resolveState(state, index, segment);
-    }, state.legMode);
+    }, state.legMode, state.legPrefer);
     if (version !== revision) return;
+    if (editedWaypoint !== undefined) {
+      const preferred = autoPreferWaypoint(state, editedWaypoint, segments);
+      if (preferred !== state) {
+        // Amend this edit without another history entry; preserve in-flight name/default changes.
+        history.value = { ...history.value, legPrefer: preferred.legPrefer };
+        render(undefined, preferred.legPrefer?.some((p, i) => p === 'side' && p !== state.legPrefer?.[i]));
+        return;
+      }
+    }
     points = joinSegments(segments);
     shapes = segments.map(segment => segment.points);
-    const warnings = routingWarnings(segments, state.legProfiles);
-    notify(warnings.join(' ') || 'ルートを更新しました。', warnings.length ? 'warn' : 'info');
+    const warnings = routingWarnings(segments, state.legProfiles, state.legPrefer, state.legMode);
+    notify(warnings.join(' ') || (sideRoadNotice ? sideRoadMessage : 'ルートを更新しました。'), warnings.length ? 'warn' : 'info');
+    if (sideRoadNotice) toast(sideRoadMessage);
     gsiUsage.update(state.legMode.includes('gsi') || segments.some(segment => segment.gsi));
     void detours.scan(state, segments, detourCurrent);
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
@@ -215,7 +227,11 @@ function updateWaypointMetrics(track: Point[]) {
     if (sub) sub.textContent = `${(d / 1000).toFixed(1)} km · 標高${sample?.ele == null ? '—' : Math.round(sample.ele).toLocaleString('ja-JP')}m`;
   });
 }
-function render() {
+function legLabel(state: RouteState, i: number) {
+  const label = state.legMode[i] === 'road' ? CONFIG.profiles[state.legProfiles[i]].label : state.legMode[i] === 'gsi' ? '地理院' : '直線';
+  return `次の経由点まで: ${label}${supportsPreference(state, i) && state.legPrefer?.[i] === 'side' ? '・脇道優先' : ''}`;
+}
+function render(editedWaypoint?: number, sideRoadNotice = false) {
   detours.clear();
   routeDrag.cancel(); livePreview.cancel(); segmentShapes = [];
   revision++;
@@ -234,7 +250,7 @@ function render() {
   $('waypoints').replaceChildren();
   const state = history.value;
   // Remove stale attribution immediately when clearing or redrawing the route.
-  if (!state.legMode.includes('gsi')) gsiUsage.update(state.points.slice(1).some((b, i) => router.cached(state.points[i], b, state.legProfiles[i], state.legMode[i])?.gsi));
+  if (!state.legMode.includes('gsi')) gsiUsage.update(state.points.slice(1).some((b, i) => router.cached(state.points[i], b, state.legProfiles[i], state.legMode[i], state.legPrefer?.[i])?.gsi));
   $('point-count').textContent = String(state.points.length);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === state.profile)));
   syncMode(state.mode);
@@ -253,12 +269,12 @@ function render() {
         points: history.value.points.map((old, index) => index === i ? { lat: p.lat, lng: p.lng } : old) };
     };
     marker.on('drag', () => { if (markerRevision === revision) livePreview.update(movedState(), i); });
-    marker.on('dragend', () => { if (markerRevision === revision) change(movedState()); });
+    marker.on('dragend', () => { if (markerRevision === revision) change(movedState(), false, i); });
     const button = document.createElement('button'); button.textContent = `経由点 ${i + 1} を削除`; button.onclick = () => { remove(i); map.closePopup(); };
     const popup = document.createElement('div'); popup.className = 'waypoint-popup'; popup.append(button);
     if (i < state.legProfiles.length) {
       const description = document.createElement('span');
-      description.textContent = `次の経由点まで: ${state.legMode[i] === 'road' ? CONFIG.profiles[state.legProfiles[i]].label : state.legMode[i] === 'gsi' ? '地理院' : '直線'}`;
+      description.textContent = legLabel(state, i);
       const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の設定で引き直す';
       redraw.onclick = () => { change(reprofile(history.value, i)); map.closePopup(); };
       popup.append(description, redraw);
@@ -270,7 +286,7 @@ function render() {
     focus.innerHTML = `<span class="name">${i === 0 ? 'スタート' : i === state.points.length - 1 ? 'ゴール' : '経由点'}</span><span class="sub num">—</span>`;
     if (i < state.legProfiles.length) {
       const profile = document.createElement('span'); profile.className = 'sub leg-profile';
-      profile.textContent = `次の経由点まで: ${state.legMode[i] === 'road' ? CONFIG.profiles[state.legProfiles[i]].label : state.legMode[i] === 'gsi' ? '地理院' : '直線'}`;
+      profile.textContent = legLabel(state, i);
       focus.append(profile);
     }
     focus.onclick = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
@@ -282,20 +298,26 @@ function render() {
       const redraw = document.createElement('button'); redraw.textContent = 'この区間を現在の設定で引き直す';
       redraw.onclick = () => change(reprofile(history.value, i)); actions.append(redraw);
     }
+    if (supportsPreference(state, i)) {
+      const prefer = document.createElement('button');
+      prefer.textContent = state.legPrefer?.[i] === 'side' ? '主要道優先にする' : '脇道優先にする';
+      prefer.onclick = () => change(preferLeg(history.value, i, state.legPrefer?.[i] === 'side' ? 'main' : 'side'));
+      actions.append(prefer);
+    }
     actions.append(del); menu.append(toggle, actions);
     menu.addEventListener('keydown', e => { if (e.key === 'Escape') { menu.open = false; toggle.focus(); } });
     item.append(label, focus, menu); $('waypoints').append(item);
   });
   routeLine.update(state);
-  calculate(revision);
+  calculate(revision, editedWaypoint, sideRoadNotice);
 }
 const routeDrag = installRouteDrag(map, line, () => ({ shapes: routeLine.shapes, points: history.value.points, revision, enabled: !history.value.importedTrack && routeLine.shapes.length > 0 }), (index, point) => {
-  change(insertWaypoint(history.value, index, point));
+  change(insertWaypoint(history.value, index, point), false, index);
 }, {
   update: (index, point) => livePreview.update(insertWaypoint(history.value, index, point), index),
   cancel: () => { livePreview.cancel(); routeLine.update(history.value); },
 });
-map.on('click', (event: L.LeafletMouseEvent) => change(insertWaypoint(history.value, history.value.points.length, { lat: event.latlng.lat, lng: event.latlng.lng })));
+map.on('click', (event: L.LeafletMouseEvent) => change(insertWaypoint(history.value, history.value.points.length, { lat: event.latlng.lat, lng: event.latlng.lng }), false, history.value.points.length));
 $('profile').onchange = () => {
   detours.clear();
   const profile = $<HTMLSelectElement>('profile').value as Profile;
@@ -318,7 +340,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => bu
   actionNotice(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);
 });
 $('undo').onclick = () => { history.undo(); render(); toast('操作を元に戻しました'); };
-$('clear').onclick = () => { change({ ...history.value, points: [], legProfiles: [], legMode: [] }); toast('ルートを消去しました'); };
+$('clear').onclick = () => { change({ ...history.value, points: [], legProfiles: [], legMode: [], legPrefer: [] }); toast('ルートを消去しました'); };
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
   detours.clear();

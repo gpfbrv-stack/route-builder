@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Router, routingWarnings, segmentKey, isDetour } from './routing';
+import { Router, routingWarnings, segmentKey, isDetour, endpointHighways } from './routing';
 import { ProfileRegistry } from './brouter-profiles';
-import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile, preferLeg, autoPreferWaypoint } from './state';
 import { GsiRouter } from './gsi-router';
 import type { LegMode, RouteState, Segment } from './types';
 import * as geo from './geo';
@@ -36,7 +36,97 @@ it('keeps GSI, straight, fallback and GSI-requested BRouter rescue surfaces unkn
   expect((await router.segment(marked[0], marked[1], 'road', 'gsi')).points.every(p => !p.surface)).toBe(true);
   expect((await testRouter(vi.fn(async () => new Response('', { status: 400 }))).segment(marked[0], marked[1], 'road')).points.every(p => !p.surface)).toBe(true);
 });
-const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], mode: 'road' as const });
+const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], legPrefer: ['main', 'main', 'main'], mode: 'road' as const });
+it('reads endpoint highways by WayTags column and preserves absent endpoints', async () => {
+  const messages = [['WayTags', 'Longitude'], ['highway=service surface=asphalt', 135000000], ['highway=primary', 135000000], ['surface=gravel highway=track', 135000000]];
+  expect(endpointHighways(messages)).toEqual({ startHighway: 'service', endHighway: 'track' });
+  expect(endpointHighways([messages[0], ['surface=asphalt'], messages[2]])).toEqual({ startHighway: undefined, endHighway: 'primary' });
+  expect(endpointHighways([messages[0], messages[1], null])).toEqual({ startHighway: 'service', endHighway: undefined });
+  for (const invalid of [null, [], [['WayTags']], [['Other'], ['highway=trunk']], [['WayTags'], [123]]]) {
+    expect(endpointHighways(invalid).startHighway).toBeUndefined();
+  }
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] }, properties: { messages } }] })));
+  const router = testRouter(fetcher);
+  const segment = await router.segment(points[0], points[1], 'road');
+  expect(segment).toMatchObject({ startHighway: 'service', endHighway: 'track' });
+  expect(router.cached(points[0], points[1], 'road')).toBe(segment);
+});
+it.each(['tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street', 'service', 'track', 'path'])('sets both eligible neighbours to side for %s', highway => {
+  const state: RouteState = { ...mixedState(), legProfiles: ['road', 'gravel', 'road'], legMode: ['road', 'road', 'road'] };
+  const segments: Segment[] = [
+    { points: [], fallback: false, startHighway: 'primary', endHighway: highway },
+    { points: [], fallback: false, startHighway: highway, endHighway: 'trunk' },
+  ];
+  const preferred = autoPreferWaypoint(state, 1, segments);
+  expect(preferred.legPrefer).toEqual(['side', 'side', 'main']);
+  expect(autoPreferWaypoint(preferred, 1, segments)).toBe(preferred);
+  expect(autoPreferWaypoint(state, 0, segments)).toBe(state); // first, not last row
+});
+it.each(['trunk', 'primary', 'secondary', 'trunk_link', 'primary_link', 'secondary_link'])('restores main for %s and uses incoming end tags', highway => {
+  const state: RouteState = { ...mixedState(), legProfiles: ['road', 'gravel', 'road'], legMode: ['road', 'road', 'road'], legPrefer: ['side', 'side', 'side'] };
+  const segments: Segment[] = [
+    { points: [], fallback: false, startHighway: 'track', endHighway: highway },
+    { points: [], fallback: false, startHighway: highway, endHighway: 'track' },
+    { points: [], fallback: false, startHighway: 'track', endHighway: highway },
+  ];
+  expect(autoPreferWaypoint(state, 1, segments).legPrefer).toEqual(['main', 'main', 'side']);
+  expect(autoPreferWaypoint(state, 3, segments).legPrefer).toEqual(['side', 'side', 'main']);
+});
+it('leaves unsupported, unknown and failed legs unchanged and resolves conflicting endpoint tags toward side', () => {
+  const state = mixedState();
+  const side: Segment = { points: [], fallback: false, startHighway: 'track', endHighway: 'track' };
+  expect(autoPreferWaypoint(state, 1, [side, side, side])).toBe(state); // MTB + straight
+  expect(autoPreferWaypoint({ ...state, legMode: ['road', 'gsi', 'road'] }, 1, [side, side, side]).legPrefer).toEqual(state.legPrefer);
+  for (const segment of [{ ...side, fallback: true }, { ...side, gsi: true }, { ...side, brouterRescue: true }, { points: [], fallback: false }]) {
+    expect(autoPreferWaypoint(state, 3, [side, side, segment])).toBe(state);
+  }
+  expect(autoPreferWaypoint({ ...state, importedTrack: points }, 3, [side, side, side]).legPrefer).toEqual(state.legPrefer);
+  const supported: RouteState = { ...state, legProfiles: ['road', 'gravel', 'road'], legMode: ['road', 'road', 'road'] };
+  expect(autoPreferWaypoint(supported, 1, [{ ...side, endHighway: 'primary' }, side, side]).legPrefer).toEqual(['side', 'side', 'main']);
+});
+it('inherits preferences on split/merge, defaults appended legs and preserves preferences on redraw', () => {
+  const state: RouteState = { ...mixedState(), legPrefer: ['side', 'main', 'side'] };
+  expect(insertWaypoint(state, 1, points[4]).legPrefer).toEqual(['side', 'side', 'main', 'side']);
+  expect(insertWaypoint(state, 0, points[4]).legPrefer).toEqual(['side', 'side', 'main', 'side']);
+  expect(insertWaypoint(state, 4, points[4]).legPrefer).toEqual(['side', 'main', 'side', 'main']);
+  expect(removeWaypoint(state, 1).legPrefer).toEqual(['side', 'side']);
+  expect(removeWaypoint(state, 2).legPrefer).toEqual(['side', 'main']);
+  expect(removeWaypoint(state, 0).legPrefer).toEqual(['main', 'side']);
+  expect(removeWaypoint(state, 3).legPrefer).toEqual(['side', 'main']);
+  expect(reprofile(state).legPrefer).toEqual(state.legPrefer);
+  const history = new History(state);
+  history.set(preferLeg(state, 2, 'main')); expect(history.value.legPrefer).toEqual(['side', 'main', 'main']);
+  history.undo(); expect(history.value).toEqual(state); expect(history.canUndo).toBe(false);
+  expect(preferLeg(state, 0, 'main')).toBe(state); // MTB
+  expect(preferLeg(state, 1, 'side')).toBe(state); // straight
+  expect(preferLeg({ ...state, legMode: ['road', 'straight', 'gsi'] }, 2, 'main').legPrefer).toEqual(state.legPrefer);
+});
+it.each(['road', 'gravel'] as const)('routes %s side legs separately from main, including pending requests and warnings', async profile => {
+  const registry = new ProfileRegistry();
+  const id = vi.spyOn(registry, 'id').mockImplementation(async key => key.endsWith('-side') ? 'custom_2' : 'custom_1');
+  const fetcher = vi.fn(async () => response()), router = new Router(fetcher, registry);
+  const [main, side, sameSide] = await Promise.all([
+    router.segment(points[0], points[1], profile),
+    router.segment(points[0], points[1], profile, 'road', () => true, 'side'),
+    router.segment(points[0], points[1], profile, 'road', () => true, 'side'),
+  ]);
+  expect(id.mock.calls.map(([key]) => key)).toEqual([`${profile}-jp`, `${profile}-jp-side`]);
+  expect(fetcher).toHaveBeenCalledTimes(2); expect(sameSide).toBe(side);
+  expect(router.cached(points[0], points[1], profile, 'road', 'side')).toBe(side);
+  expect(router.cached(points[0], points[1], profile)).toBe(main);
+  expect(routingWarnings([side], profile, ['side'])).toEqual([]);
+  expect(segmentKey(points[0], points[1], profile, 'road', 'side')).not.toBe(segmentKey(points[0], points[1], profile));
+  const route = await router.route(points.slice(0, 2), profile, () => true, undefined, ['road'], ['side']);
+  expect(route[0]).toBe(side); expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('does not select side profiles for MTB, GSI rescue or straight legs', async () => {
+  const registry = new ProfileRegistry(), id = vi.spyOn(registry, 'id').mockResolvedValue('custom_1');
+  const router = new Router(vi.fn(async () => response()), registry);
+  await router.segment(points[0], points[1], 'mtb', 'road', () => true, 'side');
+  await router.segment(points[0], points[1], 'gravel', 'gsi', () => true, 'side');
+  await router.segment(points[0], points[1], 'road', 'straight', () => true, 'side');
+  expect(id.mock.calls.map(([key]) => key)).toEqual(['mtb-jp', 'gravel-jp']);
+});
 it('selects profile defaults without changing existing legs and remembers manual modes per profile', () => {
   const saved = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
@@ -138,7 +228,7 @@ it('inherits profiles on append, insertion, deletion and movement, including end
   expect(removeWaypoint(state, 3).legProfiles).toEqual(['mtb', 'road']);
   const moved = { ...state, points: state.points.map((p, i) => i === 2 ? points[4] : p) };
   expect(moved.legProfiles).toEqual(state.legProfiles);
-  const empty = { ...state, points: [], legProfiles: [], legMode: [] };
+  const empty = { ...state, points: [], legProfiles: [], legMode: [], legPrefer: [] };
   const first = insertWaypoint(empty, 0, points[0]);
   expect(first.legProfiles).toEqual([]);
   const second = insertWaypoint(first, 1, points[1]);
@@ -265,7 +355,7 @@ it('uses custom IDs over the wire and logical keys in profileUsed, sharing regis
   expect(fetcher.mock.calls.filter(([, init]) => !init?.method).map(([url]) => new URL(String(url)).searchParams.get('profile'))).toEqual(Array(4).fill('custom_1'));
   expect(segments.every(s => s.profileUsed === 'road-jp')).toBe(true);
   expect(routingWarnings(segments, 'road')).toEqual([]);
-  expect(segmentKey(points[0], points[1], 'road')).toBe('road:road:135.000000,35.000000|135.000000,35.010000');
+  expect(segmentKey(points[0], points[1], 'road')).toBe('road:road:main:135.000000,35.000000|135.000000,35.010000');
 });
 it('re-registers once after HTTP 500 and caches the successful retry', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(registration(1)).mockResolvedValueOnce(new Response('', { status: 500 }))

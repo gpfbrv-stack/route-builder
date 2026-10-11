@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ProfileRegistry } from './brouter-profiles';
 import road from './brouter-profiles/road-jp.brf?raw';
+import roadSide from './brouter-profiles/road-jp-side.brf?raw';
+import gravelSide from './brouter-profiles/gravel-jp-side.brf?raw';
 import { CONFIG } from './config';
 
 let saved: Map<string, string>;
@@ -14,6 +16,17 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const registered = (id = 'custom_123') => new Response(JSON.stringify({ profileid: id }));
+it.each([['road-jp-side', roadSide], ['gravel-jp-side', gravelSide]])('registers, restores and re-registers %s using its unchanged source', async (key, source) => {
+  const request = vi.fn().mockResolvedValueOnce(registered()).mockResolvedValueOnce(registered('custom_456'));
+  const registry = new ProfileRegistry(request);
+  expect(await registry.id(key)).toBe('custom_123');
+  expect(request.mock.calls[0][1].body).toBe(source);
+  expect(await new ProfileRegistry(request).id(key)).toBe('custom_123');
+  registry.invalidate(key, 'custom_123');
+  expect(await registry.id(key)).toBe('custom_456');
+  expect(request.mock.calls[1][1].body).toBe(source);
+  expect(request).toHaveBeenCalledTimes(2);
+});
 
 it('registers the raw profile once and reuses it in memory and session storage', async () => {
   const request = vi.fn(async () => registered());

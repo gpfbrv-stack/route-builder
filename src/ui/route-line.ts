@@ -4,7 +4,7 @@ import type { Point, RouteState, Segment } from '../types';
 
 type Leg = { key: string; points: Point[]; pending: boolean; line: L.Polyline; casing: L.Polyline };
 const latLngs = (points: Point[]): L.LatLngExpression[] => points.map(p => [p.lat, p.lng]);
-const legKey = (state: RouteState, index: number) => segmentKey(state.points[index], state.points[index + 1], state.legProfiles[index], state.legMode[index]);
+const legKey = (state: RouteState, index: number) => segmentKey(state.points[index], state.points[index + 1], state.legProfiles[index], state.legMode[index], state.legPrefer?.[index]);
 
 /** Keep unchanged Leaflet paths, including their routed geometry, across edits. */
 export class RouteLine {
@@ -18,7 +18,7 @@ export class RouteLine {
       ? [{ key: `imported:${JSON.stringify(state.importedTrack)}`, points: state.importedTrack, pending: false }]
       : state.points.slice(1).map((b, i) => {
         const a = state.points[i], key = legKey(state, i);
-        const cached = state.legMode[i] !== 'straight' ? this.router.cached(a, b, state.legProfiles[i], state.legMode[i]) : undefined;
+        const cached = state.legMode[i] !== 'straight' ? this.router.cached(a, b, state.legProfiles[i], state.legMode[i], state.legPrefer?.[i]) : undefined;
         const previous = old.find(leg => leg.key === key);
         return { key, points: cached?.points ?? previous?.points ?? [a, b], pending: state.legMode[i] !== 'straight' && !cached && (previous?.pending ?? true) };
       });
