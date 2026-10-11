@@ -217,6 +217,12 @@ button:disabled { opacity: .45; cursor: default; }
 .google-logo { padding: 10px 10px 5px; margin: 0 0 0 8px !important; }
 .google-logo img { height: 18px; width: auto; display: block; }
 #share-url { width: 100%; min-width: 0; }
+.toast { position: fixed; z-index: 1000; left: 50%; transform: translateX(-50%); bottom: calc(32px + var(--edit-bar-h, 50px)); width: max-content; max-width: calc(100vw - 32px); padding: 8px 16px; border-radius: 8px; background: var(--text); color: #fff; font-size: 14px; overflow-wrap: anywhere; pointer-events: none; }
+.toast:empty { padding: 0; }
+@media (max-width: 767px) {
+  .toast { bottom: calc(var(--sheet-h, 168px) + 8px); transition: bottom .2s ease; }
+  .sheet-dragging .toast { transition: none; }
+}
 .route-title { border: 1px solid transparent; background: transparent; width: 100%; }
 
 [data-action="clear"] { color: var(--error); }

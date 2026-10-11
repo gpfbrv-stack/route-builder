@@ -2,16 +2,17 @@
 import { afterAll, expect, it, vi } from 'vitest';
 import type L from 'leaflet';
 import type { Sample } from '../elevation';
+import type { Place } from '../types';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
 import { PIN_STORAGE_KEY } from '../pins';
-const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false }));
+const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false, gsiWait: undefined as Promise<Place[]> | undefined }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
 });
-vi.mock('../gsi-places', () => ({ GsiPlaceProvider: class { get = async () => [{ id: -1, name: '花脊峠', kind: 'pass', lat: 35.1587, lng: 135.7861, routeDistance: 1000, offset: 50, ele: 750, elevationSource: 'DEM' }]; } }));
+vi.mock('../gsi-places', () => ({ GsiPlaceProvider: class { get = async () => captured.gsiWait ?? [{ id: -1, name: '花脊峠', kind: 'pass', lat: 35.1587, lng: 135.7861, routeDistance: 1000, offset: 50, ele: 750, elevationSource: 'DEM' }]; } }));
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
@@ -85,7 +86,21 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠750m');
   expect(document.getElementById('places')!.textContent).toContain('750 m');
   expect(document.querySelector('#chart svg')!.textContent).toContain('花脊峠');
-  expect(button('#export').disabled).toBe(true);
+  expectExportsDisabled(false);
+  button('#export').click();
+  expect(document.querySelector('.toast')!.textContent).toBe('峠・補給地点の一部は取得中のため含まれていません');
+  const partialXml = new Promise<string>(resolve => {
+    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(created.mock.lastCall![0]);
+  });
+  await vi.runAllTimersAsync();
+  expect(parseGPX(await partialXml).places.map(p => p.name)).toEqual(['花脊峠']);
+  created.mockClear();
+  const partialShare = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+  Object.defineProperty(navigator, 'share', { configurable: true, value: partialShare });
+  button('#garmin').click(); await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(0);
+  expect(partialShare).toHaveBeenCalledOnce();
+  expect(document.querySelector('.toast')!.textContent).toBe('峠・補給地点の一部は取得中のため含まれていません');
   finishOsm(new Response(JSON.stringify({ elements: [
     { type: 'node', id: 1, lat: 35.1587, lon: 135.7861, tags: { mountain_pass: 'yes', name: '花脊峠', ele: '760' } },
     { type: 'way', id: 2, center: { lat: 35.1587, lon: 135.7861 }, tags: { shop: 'convenience' } },
@@ -281,8 +296,14 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.getElementById('status')!.textContent).toContain('Overpassが混雑中');
   expect(document.getElementById('poi-status')!.textContent).toContain('Overpassが混雑中');
   expect(document.getElementById('gap-note')!.hidden).toBe(true);
-  expect(button('#export').disabled).toBe(true);
-  expectExportsDisabled(true);
+  expectExportsDisabled(false);
+  button('#share').click(); await vi.advanceTimersByTimeAsync(0);
+  expect(document.querySelector('.toast')!.textContent).toBe('共有URLをコピーしました');
+  expect(document.getElementById('status')!.textContent).toContain('Overpassが混雑中');
+  copy.mockRejectedValueOnce(new Error('denied'));
+  button('#share').click(); await vi.advanceTimersByTimeAsync(0);
+  expect(document.querySelector('.toast')!.textContent).toBe('URLを表示しました。選択してコピーしてください');
+  expect(document.getElementById('share-url')!.hidden).toBe(false);
   await vi.advanceTimersByTimeAsync(29999);
   expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 3);
   await vi.advanceTimersByTimeAsync(1);
@@ -350,6 +371,7 @@ it('imports pins without routing/network changes; canvas popup appends a waypoin
   await read('places.kml', content);
   expect(state()).toEqual(previous); expect(captured.routeCalls).toBe(calls); expect(vi.mocked(fetch).mock.calls).toHaveLength(network);
   expect(document.getElementById('status')!.textContent).toContain('ピンを1件読み込みました(1件はスキップ)');
+  expect(document.querySelector('.toast')!.textContent).toContain('ピンを1件読み込みました');
   expect(pins()).toHaveLength(1); expect(pins()[0].options.renderer).toBeInstanceOf(leaflet.Canvas);
   expect(pins()[0].options.bubblingMouseEvents).toBe(false);
   expect(captured.map!.getPane('pinPane')!.style.zIndex).toBe('340');
@@ -359,6 +381,7 @@ it('imports pins without routing/network changes; canvas popup appends a waypoin
   expect(state()).toEqual(previous);
   expect(document.querySelector('.pin-popup')!.textContent).toContain('マイピン');
   document.querySelector<HTMLButtonElement>('.pin-popup button')!.click();
+  expect(document.querySelector('.toast')!.textContent).toBe('経由点を追加しました');
   expect(state().points).toEqual([...previous.points, { lat: 36, lng: 138 }]);
   document.getElementById('undo')!.click(); expect(state()).toEqual(previous);
   await read('places.kml', content); expect(pins()).toHaveLength(1);
@@ -377,6 +400,7 @@ it('imports pins without routing/network changes; canvas popup appends a waypoin
   await read('quota.kml', content);
   expect(pins()).toHaveLength(2); expect(localStorage.getItem(PIN_STORAGE_KEY)).toBe(stored);
   expect(document.getElementById('status')!.textContent).toContain('ピンを保存できません');
+  expect(document.querySelector('.toast')!.textContent).toContain('ピンを保存できません');
   storage.mockRestore();
   await read('too-big.kml', content, 20_000_001); expect(pins()).toHaveLength(2);
   expect(document.getElementById('status')!.textContent).toContain('20MB');
@@ -390,4 +414,38 @@ it('imports pins without routing/network changes; canvas popup appends a waypoin
   expect(pins()).toHaveLength(3); expect(state()).toEqual(previous);
   expect(document.getElementById('status')!.textContent).toContain('ピンを1件読み込みました(1件はスキップ)');
   expect(JSON.parse(localStorage.getItem(PIN_STORAGE_KEY)!)).toHaveLength(3);
+});
+
+it('exports while GSI places are pending and clears the partial notice after completion', async () => {
+  let finish!: (places: Place[]) => void;
+  captured.gsiWait = new Promise(resolve => { finish = resolve; });
+  captured.map!.fire('click', { latlng: { lat: 36.04, lng: 138 } });
+  await vi.advanceTimersByTimeAsync(2100);
+  document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => expect(b.disabled).toBe(false));
+  document.getElementById('export')!.click();
+  expect(document.querySelector('.toast')!.textContent).toContain('一部は取得中');
+  finish([]); captured.gsiWait = undefined;
+  await vi.advanceTimersByTimeAsync(0);
+  document.getElementById('export')!.click();
+  expect(document.querySelector('.toast')!.textContent).toBe('GPXを保存しました');
+});
+
+it('wires the mobile share action to native sharing, silent cancellation and clipboard fallback', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)', addEventListener() {} }));
+  const share = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'share', { configurable: true, value: share });
+  const button = document.querySelector<HTMLButtonElement>('#menu-pop [data-action="share"]')!;
+  button.click(); await vi.advanceTimersByTimeAsync(0);
+  const state = JSON.parse(localStorage.getItem('route-builder:v1')!);
+  expect(share).toHaveBeenCalledWith({ title: state.name, url: expect.stringContaining('#route=') });
+  expect(document.querySelector('.toast')!.textContent).toBe('ルートを共有しました');
+  await vi.advanceTimersByTimeAsync(3000);
+  share.mockRejectedValueOnce(new DOMException('cancel', 'AbortError'));
+  const copies = vi.mocked(navigator.clipboard.writeText).mock.calls.length;
+  button.click(); await vi.advanceTimersByTimeAsync(0);
+  expect(document.querySelector('.toast')!.textContent).toBe('');
+  expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(copies);
+  share.mockRejectedValueOnce(new Error('denied'));
+  button.click(); await vi.advanceTimersByTimeAsync(0);
+  expect(document.querySelector('.toast')!.textContent).toBe('共有URLをコピーしました');
 });

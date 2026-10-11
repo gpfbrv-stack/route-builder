@@ -30,6 +30,8 @@ import { installPanel } from './panel';
 
 import { mountUI } from './ui/layout';
 import { StatusMessages, type StatusKind } from './ui/status';
+import { installToast } from './ui/toast';
+import { shareRoute } from './ui/share';
 import { installPopover } from './ui/popover';
 import { icon } from './ui/icons';
 import { installRouteDrag } from './ui/route-drag';
@@ -42,6 +44,7 @@ mountUI();
 const showGarminInstructions = installGarminDialog();
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const status = new StatusMessages($('status'));
+const toast = installToast();
 const map = createMap('map', message => status.set('map', message, message.includes('できません') ? 'warn' : message.includes('中…') ? 'busy' : 'info'));
 const closeMenu = installPopover($<HTMLButtonElement>('menu-btn'), $('menu-pop'));
 document.querySelectorAll('#menu-pop [data-action]').forEach(button => button.addEventListener('click', () => closeMenu()));
@@ -69,7 +72,7 @@ let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
 let garminBusy = false;
 function syncExport() {
-  document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy));
+  document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy));
   if (readyRevision === revision && resolvedTrack.length >= 2) void preloadFit();
 }
 function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap, chartMode.mode, surfaces); }
@@ -142,11 +145,15 @@ const history = new History({ name: '新しいルート', points: [], profile: '
 const detours = new DetourSuggestions(router, status, $('waypoints'), () => history.value, change);
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
+function actionNotice(message: string, kind: StatusKind = 'info') { notify(message, kind); toast(message); }
+const partialExportMessage = '峠・補給地点の一部は取得中のため含まれていません';
 function change(next: RouteState, keepTrack = false) {
-  if (next.points.length > 200) { notify('経由点は200点までです。', 'warn'); return; }
+  if (next.points.length > 200) { actionNotice('経由点は200点までです。', 'warn'); return; }
+  const added = !keepTrack && next.points.length > history.value.points.length;
   history.set(keepTrack ? next : { ...next, importedTrack: undefined, importedPlaces: undefined }); render();
+  if (added) toast('経由点を追加しました');
 }
-function remove(index: number) { change(removeWaypoint(history.value, index)); }
+function remove(index: number) { change(removeWaypoint(history.value, index)); toast('経由点を削除しました'); }
 const calculate = debounce(async (version: number) => {
   if (version !== revision) return;
   const state = structuredClone(history.value);
@@ -296,7 +303,7 @@ $('profile').onchange = () => {
   syncMode(history.value.mode);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === profile)));
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
-  notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
+  actionNotice(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
 };
 $('reprofile-all').onclick = () => { if (history.value.legProfiles.length) change(reprofile(history.value)); };
 function syncMode(mode: LegMode) {
@@ -308,10 +315,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => bu
   history.value = selectMode(history.value, mode);
   syncMode(mode);
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
-  notify(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);
+  actionNotice(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);
 });
-$('undo').onclick = () => { history.undo(); render(); };
-$('clear').onclick = () => change({ ...history.value, points: [], legProfiles: [], legMode: [] });
+$('undo').onclick = () => { history.undo(); render(); toast('操作を元に戻しました'); };
+$('clear').onclick = () => { change({ ...history.value, points: [], legProfiles: [], legMode: [] }); toast('ルートを消去しました'); };
 $('fit').onclick = () => { if (line.getLatLngs().length) map.fitBounds(line.getBounds(), { paddingTopLeft: [24, 72], paddingBottomRight: [72, matchMedia('(max-width: 767px)').matches ? $('panel').clientHeight + 24 : 88], maxZoom: 16 }); };
 document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach(input => input.onchange = () => {
   detours.clear();
@@ -320,8 +327,9 @@ document.querySelectorAll<HTMLInputElement>('#route-name, #mobile-name').forEach
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
 });
 $('import').onclick = () => $<HTMLInputElement>('file').click();
+let pinStorageWarning = '';
 const pinsUI = installPinsUI(map, point => change(insertWaypoint(history.value, history.value.points.length, point)),
-  message => status.set('pin-storage', message, 'warn'));
+  message => { pinStorageWarning = message; status.set('pin-storage', message, 'warn'); if (message) toast(message); });
 $('file').onchange = async () => {
   const file = $<HTMLInputElement>('file').files?.[0]; if (!file) return;
   try {
@@ -332,31 +340,39 @@ $('file').onchange = async () => {
     if (format === 'gpx') {
       const imported = parseGPX(textContent, history.value.profile, history.value.mode); change(imported.state, true);
       $('fit').click();
+      actionNotice('GPXを読み込みました');
     } else {
       const imported = format === 'geojson' ? parsePinGeoJson(textContent)
         : parseKml(format === 'kmz' ? await extractKmz(content instanceof Uint8Array ? content : new Uint8Array(await file.arrayBuffer())) : textContent);
       pinsUI.import(file.name, imported.pins);
-      notify(`ピンを${imported.pins.length}件読み込みました(${imported.skipped}件はスキップ)`);
+      actionNotice(`ピンを${imported.pins.length}件読み込みました(${imported.skipped}件はスキップ)`);
+      if (pinStorageWarning) toast(pinStorageWarning);
     }
-  } catch (error) { notify(error instanceof Error ? error.message : 'ファイルを読み込めませんでした', 'warn'); }
+  } catch (error) { actionNotice(error instanceof Error ? error.message : 'ファイルを読み込めませんでした', 'warn'); }
   $<HTMLInputElement>('file').value = '';
 };
 $('export').onclick = () => {
-  if (readyRevision !== revision || placesRevision !== revision) return;
-  const blob = new Blob([generateGPX(history.value, resolvedTrack, places, poiUI.exportPois)], { type: 'application/gpx+xml' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = gpxFilename(history.value.name); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-  if (resolvedTrack.some(p => p.ele == null)) notify('標高欠測点はeleを省略して保存しました。');
+  if (readyRevision !== revision || resolvedTrack.length < 2) return;
+  try {
+    const blob = new Blob([generateGPX(history.value, resolvedTrack, places, poiUI.exportPois)], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = gpxFilename(history.value.name);
+    try { link.click(); } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    if (resolvedTrack.some(p => p.ele == null)) notify('標高欠測点はeleを省略して保存しました。');
+    toast(placesRevision !== revision ? partialExportMessage : 'GPXを保存しました');
+  } catch (error) { actionNotice(`GPXを保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
 };
 $('garmin').onclick = async () => {
-  if (garminBusy || readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2) return;
+  if (garminBusy || readyRevision !== revision || resolvedTrack.length < 2) return;
+  const partial = placesRevision !== revision;
   const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   garminBusy = true; syncExport();
   try {
-    await sendGarminCourse({ name: history.value.name, profile: history.value.profile,
+    const result = await sendGarminCourse({ name: history.value.name, profile: history.value.profile,
       legs: history.value.legProfiles.map((profile, i) => ({ profile,
         distance: segmentShapes[i] ? routeLength(segmentShapes[i]) : i === 0 ? routeLength(resolvedTrack) : 0 })).filter((_, i) => history.value.legMode[i] === 'road'),
       resolvedTrack, places, pois: poiUI.fitPois }, () => showGarminInstructions(trigger));
-  } catch (error) { notify(`FITを送信・保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
+    if (result) toast(partial ? partialExportMessage : result === 'shared' ? 'FITを共有しました' : 'FITを保存しました');
+  } catch (error) { actionNotice(`FITを送信・保存できませんでした。${error instanceof Error ? error.message : ''}`, 'warn'); }
   finally {
     garminBusy = false; syncExport();
     if (!$<HTMLDialogElement>('garmin-dialog').open && document.activeElement === document.body) trigger?.focus();
@@ -365,7 +381,10 @@ $('garmin').onclick = async () => {
 $('share').onclick = async () => {
   const url = new URL(location.href); url.hash = encodeRoute(history.value);
   const input = $<HTMLInputElement>('share-url'); input.value = url.href;
-  try { await navigator.clipboard.writeText(url.href); input.hidden = true; notify('共有URLをコピーしました。経由点から受信側で再計算します。'); } catch { input.hidden = false; if (matchMedia('(max-width: 767px)').matches) sheet.expand(); input.focus(); input.select(); input.scrollIntoView({ block: 'nearest' }); notify('共有URLを表示しました。選択してコピーしてください。'); }
+  await shareRoute(history.value.name, url.href,
+    () => { input.hidden = true; actionNotice('共有URLをコピーしました'); },
+    () => { input.hidden = false; if (matchMedia('(max-width: 767px)').matches) sheet.expand(); input.focus(); input.select(); input.scrollIntoView({ block: 'nearest' }); actionNotice('URLを表示しました。選択してコピーしてください'); },
+    () => { input.hidden = true; actionNotice('ルートを共有しました'); });
 };
 window.addEventListener('hashchange', () => {
   if (!location.hash.startsWith('#route=')) return;
