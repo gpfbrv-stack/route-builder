@@ -10,6 +10,7 @@ vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
   return { createMap: (...args: Parameters<typeof actual.createMap>) => { captured.map = actual.createMap(...args); return captured.map; } };
 });
+vi.mock('../gsi-places', () => ({ GsiPlaceProvider: class { get = async () => [{ id: -1, name: '花脊峠', kind: 'pass', lat: 35.1587, lng: 135.7861, routeDistance: 1000, offset: 50, ele: 750, elevationSource: 'DEM' }]; } }));
 vi.mock('../dem', () => ({ DemProvider: class { sample = async (samples: Sample[]) => samples.map((s, i) => ({ ...s, ele: 600 + i })); elevation = async () => 760; } }));
 vi.mock('../routing', async importOriginal => {
   const actual = await importOriginal<typeof import('../routing')>();
@@ -35,6 +36,8 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
     { type: 'node', id: 1, lat: 35.1587, lon: 135.7861, tags: { mountain_pass: 'yes', name: '花脊峠', ele: '760' } },
     { type: 'way', id: 2, center: { lat: 35.1587, lon: 135.7861 }, tags: { shop: 'convenience' } },
   ] })));
+  let finishOsm!: (response: Response) => void;
+  osmFetch.mockImplementationOnce(() => new Promise(resolve => { finishOsm = resolve; }));
   vi.stubGlobal('fetch', osmFetch);
   document.body.innerHTML = '<div id="app"></div>';
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -69,6 +72,17 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(button('.controls [data-mode="road"]').getAttribute('aria-pressed')).toBe('true');
   for (const [lat, lng] of [[35.15, 135.78], [35.1587, 135.7861]]) captured.map!.fire('click', { latlng: { lat, lng } });
   expect(state().points).toHaveLength(2); expect(button('#export').disabled).toBe(true); await settle();
+  expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠750m');
+  expect(document.getElementById('places')!.textContent).toContain('750 m');
+  expect(document.querySelector('#chart svg')!.textContent).toContain('花脊峠');
+  expect(button('#export').disabled).toBe(true);
+  finishOsm(new Response(JSON.stringify({ elements: [
+    { type: 'node', id: 1, lat: 35.1587, lon: 135.7861, tags: { mountain_pass: 'yes', name: '花脊峠', ele: '760' } },
+    { type: 'way', id: 2, center: { lat: 35.1587, lon: 135.7861 }, tags: { shop: 'convenience' } },
+  ] })));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(document.querySelectorAll('.pass-label')).toHaveLength(1);
+  expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠760m');
   expect(button('#export').disabled).toBe(false); expect(document.querySelector('.wp-marker.start')!.textContent).toBe('S'); expect(document.querySelector('.wp-marker.goal')!.textContent).toBe('G');
   expectExportsDisabled(false);
   expect(osmFetch).toHaveBeenCalledTimes(1);
@@ -249,7 +263,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   button('#clear').click(); expect(state().points).toHaveLength(0); button('#undo').click(); expect(state().points).toHaveLength(2); await settle();
   captured.map!.fire('click', { latlng: { lat: 35.15, lng: 135.78 } }); await settle();
   expect(document.querySelector('[data-waypoint="2"] .sub')!.textContent).not.toMatch(/^0\.0 km/);
-  osmFetch.mockResolvedValueOnce(new Response('rate_limited', { status: 429 }));
+  for (let i = 0; i < 3; i++) osmFetch.mockResolvedValueOnce(new Response('rate_limited', { status: 429 }));
   const beforeRetry = osmFetch.mock.calls.length;
   captured.map!.fire('click', { latlng: { lat: 35.16, lng: 135.79 } });
   await vi.advanceTimersByTimeAsync(1700);
@@ -260,15 +274,16 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(button('#export').disabled).toBe(true);
   expectExportsDisabled(true);
   await vi.advanceTimersByTimeAsync(29999);
-  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 1);
+  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 3);
   await vi.advanceTimersByTimeAsync(1);
-  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 2);
+  expect(osmFetch).toHaveBeenCalledTimes(beforeRetry + 4);
   expect(document.getElementById('status')!.textContent).not.toContain('Overpassが混雑中');
   expect(button('#export').disabled).toBe(false);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(1);
-  osmFetch.mockResolvedValueOnce(new Response('', { status: 500 }));
+  osmFetch.mockResolvedValueOnce(new Response('', { status: 400 }));
   captured.map!.fire('click', { latlng: { lat: 35.17, lng: 135.8 } }); await settle();
   expect(document.getElementById('poi-status')!.textContent).toContain('取得できませんでした');
+  expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠750m');
   expect(document.getElementById('gap-note')!.hidden).toBe(true);
   expect(document.querySelectorAll('.poi-marker')).toHaveLength(0);
   const longRoute = { ...imported, points: [{ lat: 35.1587, lng: 135.7861, ele: 760 }, { lat: 35.4587, lng: 135.7861, ele: 800 }] };

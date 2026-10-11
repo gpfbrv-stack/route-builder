@@ -5,13 +5,14 @@ import '@fontsource/noto-sans-jp/500.css';
 import '@fontsource/noto-sans-jp/700.css';
 import './style.css';
 import { createMap } from './map';
-import { CONFIG, type Profile } from './config';
+import { CONFIG, GSI_ATTRIBUTION, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
 import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import { LEG_MODE_LABELS, type LegMode, type RouteState, type Point, type Place } from './types';
-import { filterPlaces } from './places';
+import { filterPlaces, progressivePlaces } from './places';
+import { GsiPlaceProvider } from './gsi-places';
 import { OsmProvider } from './osm';
 import { preparePois } from './poi';
 import { installPoiUI } from './ui/poi';
@@ -50,6 +51,8 @@ const line = routeLine.hit;
 const livePreview = new RoutePreview(router, state => routeLine.update(state), (index, segment) => routeLine.resolve(index, segment));
 const dem = new DemProvider();
 const osmProvider = new OsmProvider();
+const gsiPlaces = new GsiPlaceProvider(point => dem.elevation(point));
+map.attributionControl.addAttribution(`地名: ${GSI_ATTRIBUTION}`);
 const placeMarkers = L.layerGroup().addTo(map);
 const poiUI = installPoiUI(map, updateChart);
 let places: Place[] = [];
@@ -85,30 +88,48 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   $('places-status').textContent = '峠・山を検索中…';
   poiUI.reset('補給・休憩を検索中…');
   const imported = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : undefined;
-  try {
-    const result = await osmProvider.get(points, () => version === revision, retrying => {
-      if (version !== revision) return;
-      const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
-      status.set('osm', message, 'warn'); $('places-status').textContent = message; poiUI.message(message);
-    });
-    if (version !== revision) return;
-    poiUI.set(preparePois(result.pois), routeLength(points));
-    const found = imported ?? filterPlaces(result.places, points);
-    for (const place of found) {
-      if (version !== revision) return;
+  const current = () => version === revision;
+  const errors: string[] = [];
+  const publish = (found: Place[]) => {
+    places = imported ?? found; renderPlaces();
+    $('places-status').textContent = places.length ? '' : errors.join(' ') || 'ルート近傍に登録された峠・山は見つかりませんでした。';
+  };
+  const gsi = gsiPlaces.get(points, current).catch(error => {
+    if (current()) errors.push(error instanceof Error ? error.message : '地理院注記を取得できませんでした。');
+    return [];
+  }).then(async found => {
+    for (const place of imported ?? []) {
+      if (!current()) return [];
       if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
     }
-    if (version !== revision) return;
-    status.set('osm', ''); places = found; renderPlaces();
-    $('places-status').textContent = found.length ? '' : 'ルート近傍に登録された峠・山は見つかりませんでした。';
-  } catch (error) {
-    if (version !== revision) return;
-    const reason = error instanceof Error ? error.message : '';
-    places = imported ?? []; renderPlaces();
-    $('places-status').textContent = imported ? '' : '峠・山を取得できませんでした。' + reason;
-    poiUI.reset('補給・休憩を取得できませんでした。' + reason);
-    status.set('osm', 'OSM地物を取得できませんでした。' + reason, 'warn');
-  }
+    return found;
+  });
+  const osm = (async () => {
+    try {
+      const result = await osmProvider.get(points, current, retrying => {
+        if (!current()) return;
+        const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
+        status.set('osm', message, 'warn'); poiUI.message(message);
+      });
+      if (!current()) return [];
+      poiUI.set(preparePois(result.pois), routeLength(points));
+      const found = filterPlaces(result.places, points);
+      for (const place of found) {
+        if (!current()) return [];
+        if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
+      }
+      if (current()) status.set('osm', '');
+      return found;
+    } catch (error) {
+      if (!current()) return [];
+      const reason = error instanceof Error ? error.message : '';
+      errors.push('OSM地物を取得できませんでした。' + reason);
+      poiUI.reset('補給・休憩を取得できませんでした。' + reason);
+      status.set('osm', errors.at(-1)!, 'warn');
+      return [];
+    }
+  })();
+  await progressivePlaces(gsi, osm, publish, current);
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
 const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: defaultLegMode('mtb') });

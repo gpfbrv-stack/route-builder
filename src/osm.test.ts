@@ -122,14 +122,15 @@ it('refetches POIs for a different line in the same bbox while retaining the pla
 
 it.each([429, 504, 200])('waits exactly 30 seconds and retries once for busy status %s', async status => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => response()).mockResolvedValueOnce(new Response('timeout', { status }));
+  const fetcher = vi.fn(async () => response());
+  for (let i = 0; i < 3; i++) fetcher.mockResolvedValueOnce(new Response('timeout', { status }));
   const busy = vi.fn(), provider = new OsmProvider(fetcher);
   const result = provider.get(route, () => true, busy);
   await vi.advanceTimersByTimeAsync(0);
   expect(busy).toHaveBeenCalledWith(true);
-  await vi.advanceTimersByTimeAsync(29999); expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(29999); expect(fetcher).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(1); expect((await result).places).toHaveLength(1);
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(4);
 });
 
 it('stops after a second busy response and does not cache failures', async () => {
@@ -138,15 +139,14 @@ it('stops after a second busy response and does not cache failures', async () =>
   const provider = new OsmProvider(fetcher);
   const failed = expect(provider.get(route, () => true, busy)).rejects.toThrow('Overpassが混雑中');
   await vi.advanceTimersByTimeAsync(60000); await failed;
-  expect(fetcher).toHaveBeenCalledTimes(2); expect(busy.mock.calls).toEqual([[true], [false]]);
+  expect(fetcher).toHaveBeenCalledTimes(6); expect(busy.mock.calls).toEqual([[true], [false]]);
   fetcher.mockResolvedValueOnce(response());
-  expect((await provider.get(route)).pois).toHaveLength(2); expect(fetcher).toHaveBeenCalledTimes(3);
+  expect((await provider.get(route)).pois).toHaveLength(2); expect(fetcher).toHaveBeenCalledTimes(7);
 });
 
-it.each(['http', 'remark', 'invalid', 'network'])('does not retry or cache ordinary failure: %s', async failure => {
+it.each(['http', 'remark', 'invalid'])('does not retry or cache ordinary failure: %s', async failure => {
   const fetcher = vi.fn(async () => response());
-  if (failure === 'network') fetcher.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-  else fetcher.mockResolvedValueOnce(failure === 'http' ? new Response('', { status: 500 }) : new Response(failure === 'remark' ? '{"elements":[],"remark":"incomplete"}' : '{}'));
+  fetcher.mockResolvedValueOnce(failure === 'http' ? new Response('', { status: 400 }) : new Response(failure === 'remark' ? '{"elements":[],"remark":"incomplete"}' : '{}'));
   const provider = new OsmProvider(fetcher), busy = vi.fn();
   await expect(provider.get(route, () => true, busy)).rejects.toThrow();
   expect(fetcher).toHaveBeenCalledTimes(1); expect(busy).not.toHaveBeenCalled();
@@ -155,15 +155,16 @@ it.each(['http', 'remark', 'invalid', 'network'])('does not retry or cache ordin
 
 it('skips a stale retry and serializes a newer request behind the cooldown', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => response()).mockResolvedValueOnce(new Response('', { status: 429 }));
+  const fetcher = vi.fn(async () => response());
+  for (let i = 0; i < 3; i++) fetcher.mockResolvedValueOnce(new Response('', { status: 429 }));
   const provider = new OsmProvider(fetcher); let current = true;
   const old = provider.get(route, () => current);
   await vi.advanceTimersByTimeAsync(0); current = false;
   const next = provider.get(route);
-  await vi.advanceTimersByTimeAsync(29999); expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(29999); expect(fetcher).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(1);
   expect(await old).toEqual({ places: [], pois: [] }); expect((await next).places).toHaveLength(1);
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(4);
 });
 
 it('does not fetch stale or overly broad routes', async () => {
@@ -179,4 +180,36 @@ it('bounds the successful caches to 32 entries', async () => {
   for (const points of routes) await provider.get(points);
   await provider.get(routes[32]); expect(fetcher).toHaveBeenCalledTimes(33);
   await provider.get(routes[0]); expect(fetcher).toHaveBeenCalledTimes(34);
+});
+
+it.each(['network', 'timeout', '429', '500', '503', 'rate_limited'])('switches endpoints after %s and remembers success', async failure => {
+  const fetcher = vi.fn(async () => response());
+  if (failure === 'network' || failure === 'timeout') fetcher.mockRejectedValueOnce(new Error(failure));
+  else fetcher.mockResolvedValueOnce(new Response(failure === 'rate_limited' ? failure : '', { status: failure === 'rate_limited' ? 200 : Number(failure) }));
+  const provider = new OsmProvider(fetcher);
+  await provider.get(route);
+  await provider.get(route.map(p => ({ ...p, lat: p.lat + 0.1 })));
+  expect(fetcher.mock.calls.map(call => (call as unknown[])[0])).toEqual([
+    'https://overpass-api.de/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ]);
+});
+it('uses the third endpoint before any cooldown', async () => {
+  const timeout = vi.spyOn(AbortSignal, 'timeout');
+  const fetcher = vi.fn(async () => response());
+  fetcher.mockRejectedValueOnce(new TypeError('network')).mockResolvedValueOnce(new Response('', { status: 500 }));
+  const busy = vi.fn();
+  await new OsmProvider(fetcher).get(route, () => true, busy);
+  expect((fetcher.mock.calls as unknown[][])[2][0]).toBe('https://overpass.private.coffee/api/interpreter');
+  expect(busy).not.toHaveBeenCalled();
+  expect(timeout.mock.calls).toEqual([[30000], [30000], [30000]]);
+});
+
+it('skips cooldown when the route becomes stale during the last failed endpoint', async () => {
+  let current = true, calls = 0;
+  const fetcher = vi.fn(async () => { if (++calls === 3) current = false; throw new TypeError('network'); });
+  const busy = vi.fn();
+  expect(await new OsmProvider(fetcher).get(route, () => current, busy)).toEqual({ places: [], pois: [] });
+  expect(fetcher).toHaveBeenCalledTimes(3); expect(busy).not.toHaveBeenCalled();
 });

@@ -81,6 +81,7 @@ export class OsmProvider {
   private placesCache = new Map<string, OsmNode[]>();
   private poiCache = new Map<string, ReturnType<typeof splitOsmResponse>['pois']>();
   private queue = new RequestQueue(1);
+  private preferred = CONFIG.overpass.endpoints[0];
   constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   async get(route: Point[], current = () => true, onBusy: (retrying: boolean) => void = () => {}): Promise<OsmResult> {
     const bbox = routeBBox(route), bboxKey = bbox.join(',');
@@ -93,21 +94,33 @@ export class OsmProvider {
       if (!places || !pois) {
         for (let attempt = 0; attempt < 2; attempt++) {
           if (!current()) return empty;
-          // POST keeps up to 400 polyline coordinates out of URL length limits.
-          const response = await this.request('https://overpass-api.de/api/interpreter', {
-            method: 'POST', body: new URLSearchParams({ data: query }), signal: AbortSignal.timeout(30000),
-          });
-          const body = await response.text();
+          let data: { elements: OsmElement[] } | undefined;
+          const endpoints = [this.preferred, ...CONFIG.overpass.endpoints.filter(url => url !== this.preferred)];
+          for (const endpoint of endpoints) {
+            if (!current()) return empty;
+            let response: Response, body: string;
+            try {
+              response = await this.request(endpoint, {
+                method: 'POST', body: new URLSearchParams({ data: query }), signal: AbortSignal.timeout(CONFIG.overpass.timeoutMs),
+              });
+              body = await response.text();
+            } catch { continue; }
+            if (!current()) return empty;
+            if (isOverpassBusy(response.status, body) || response.status >= 500) continue;
+            if (!response.ok) throw new Error(`Overpass ${response.status}`);
+            const parsed = JSON.parse(body);
+            if (!Array.isArray(parsed.elements) || parsed.remark) throw new Error('Overpass incomplete response');
+            data = parsed;
+            this.preferred = endpoint;
+            break;
+          }
           if (!current()) return empty;
-          if (isOverpassBusy(response.status, body)) {
+          if (!data) {
             onBusy(attempt === 0);
             if (attempt === 1) throw new OverpassBusyError();
             await new Promise(resolve => setTimeout(resolve, 30000));
             continue;
           }
-          if (!response.ok) throw new Error(`Overpass ${response.status}`);
-          const data = JSON.parse(body);
-          if (!Array.isArray(data.elements) || data.remark) throw new Error('Overpass incomplete response');
           const split = splitOsmResponse(data.elements);
           places ??= split.places;
           pois = split.pois;

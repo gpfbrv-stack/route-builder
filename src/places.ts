@@ -3,7 +3,7 @@ import { OsmProvider } from './osm';
 import type { OsmNode } from './osm';
 export { routeBBox } from './osm';
 export type { OsmNode } from './osm';
-import { nearestOnRoute, validPoint } from './geo';
+import { distance, nearestOnRoute, validPoint } from './geo';
 import type { Place, Point } from './types';
 export function parseEle(text?: string): number | null {
   if (!text || !/^[+-]?\d+(?:\.\d+)?\s*(?:m)?$/.test(text.trim())) return null;
@@ -29,4 +29,27 @@ export class PlaceProvider {
   async get(route: Point[], current = () => true): Promise<Place[]> {
     return filterPlaces((await this.osm.get(route, current)).places, route);
   }
+}
+
+// Ignore parenthesized readings, but do not normalize spelling differences.
+const placeName = (name: string) => name.replace(/[（(][ぁ-ゖァ-ヺー\s・]+[）)]/g, '').trim();
+export function mergePlaces(gsi: Place[], osm: Place[]): Place[] {
+  const result = gsi.map(p => ({ ...p }));
+  for (const place of osm) {
+    const index = result.findIndex(p => placeName(p.name) === placeName(place.name) && distance(p, place) <= 500);
+    if (index < 0) result.push({ ...place });
+    else if (place.elevationSource === 'OSM' && place.ele != null) result[index] = { ...place };
+  }
+  return result.sort((a, b) => a.routeDistance - b.routeDistance);
+}
+
+export async function progressivePlaces(
+  gsi: Promise<Place[]>, osm: Promise<Place[]>,
+  publish: (places: Place[]) => void, current = () => true,
+): Promise<void> {
+  let first: Place[] = [], second: Place[] = [];
+  await Promise.allSettled([
+    gsi.then(places => { first = places; if (current()) publish(mergePlaces(first, second)); }),
+    osm.then(places => { second = places; if (current()) publish(mergePlaces(first, second)); }),
+  ]);
 }

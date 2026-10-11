@@ -1,6 +1,8 @@
 export const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
 export const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>';
 export const CONFIG = {
+  overpass: { endpoints: ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], timeoutMs: 30000 },
+  gsiPlaces: { zoom: 15, concurrency: 4, cacheSize: 200, tileLimit: 80, timeoutMs: 15000, marginDegrees: 0.003 },
   gsi: { tileLimit: 300, bridgeM: 30, bridgePenalty: 3, detourRatio: 2.5, detourExtraM: 1000 },
   fit: { speedKmh: { mtb: 12, gravel: 18, road: 25 } },
   profiles: { mtb: { label: '山サイ', custom: 'mtb-jp', api: 'mtb', fallback: ['trekking-jp'] }, gravel: { label: 'グラベル', custom: 'gravel-jp', api: 'gravel' }, road: { label: 'ロード', custom: 'road-jp', api: 'fastbike' } },
