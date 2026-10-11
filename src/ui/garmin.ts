@@ -31,8 +31,9 @@ export async function sendGarminCourse(input: Omit<FitCourseInput, 'timeCreated'
     try { await navigator.share({ files: [file], title: input.name }); }
     catch (error) {
       if (!(error && typeof error === 'object' && 'name' in error && error.name === 'AbortError')) throw error;
+      return;
     }
-    return;
+    return 'shared' as const;
   }
   const url = URL.createObjectURL(file), link = document.createElement('a');
   link.href = url; link.download = file.name;
@@ -40,4 +41,5 @@ export async function sendGarminCourse(input: Omit<FitCourseInput, 'timeCreated'
   try { link.click(); }
   finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
   showInstructions();
+  return 'downloaded' as const;
 }
