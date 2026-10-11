@@ -17,11 +17,12 @@ export function mountUI() {
         <div id="status" class="status" role="status" aria-live="polite"><span class="dot"></span><span id="notice"></span></div>
         <input id="share-url" aria-label="共有URL" readonly hidden>
         <dl class="stats"><div class="stat main"><dt>距離</dt><dd class="num" id="summary">—<small>km</small></dd></div><div id="stats"></div></dl>
-        <section class="section"><div class="section-head"><h2>標高</h2><small>なぞると地図に位置を表示</small></div><div id="chart" class="chart"></div><div class="legend" aria-label="勾配の凡例">${['〜3%', '3〜6%', '6〜9%', '9〜12%', '12%〜', '下り'].map((label, i) => `<span><i style="background:var(--g${['0','3','6','9','12','down'][i]})"></i>${label}</span>`).join('')}</div></section>
-        <section class="section"><div class="section-head"><h2>通過する峠・山</h2><small>OSM登録地物</small></div><p id="places-status" class="empty"></p><ul id="places" class="list"></ul></section>
+        <p id="surface-summary" class="surface-summary num" aria-label="路面別の距離"></p>
+        <section class="section"><div class="section-head chart-head"><h2>標高</h2><div class="seg seg-small chart-mode" role="group" aria-label="標高グラフの塗り分け"><button data-chart-mode="surface" aria-pressed="true">路面</button><button data-chart-mode="grade" aria-pressed="false">勾配</button></div><small>なぞると地図に位置を表示</small></div><div id="chart" class="chart"></div><div id="chart-legend" class="legend" aria-label="路面の凡例"></div></section>
+        <section class="section"><div class="section-head"><h2>通過する峠・山</h2><small>地理院(注記)/ OSM</small></div><p id="places-status" class="empty"></p><ul id="places" class="list"></ul></section>
         <section class="section" aria-labelledby="poi-heading"><div class="section-head"><h2 id="poi-heading">補給・休憩</h2><small>ルート近傍のOSM登録地物</small></div><div id="poi-chips" class="chips" role="group" aria-label="表示する種類"></div><p id="poi-status" class="empty" role="status"></p><div id="gap-note" class="gap-note" hidden></div><ul id="poi-list" class="list"></ul><button id="poi-more" class="more-btn" hidden>さらに表示</button><label class="check-row"><input id="poi-gpx" type="checkbox" checked>表示中の補給・休憩を含める（FIT・GPX）</label></section>
         <details class="section"><summary><div class="section-head"><h2>経由点 <span id="point-count" class="num">0</span></h2><svg class="chev" width="18" height="18"><use href="#i-chev"/></svg></div></summary><ol id="waypoints" class="list"></ol></details>
-        <section class="section"><p class="note">経路は通行可能性を保証しません。現地の規制・通行状況を確認してください。<br>ルート: BRouter・地理院タイル / 地物: © OpenStreetMap contributors / 標高: 地理院タイル<br>登降は5mヒステリシスによる概算</p></section>
+        <section class="section"><p class="note">経路は通行可能性を保証しません。現地の規制・通行状況を確認してください。<br>ルート: BRouter・地理院タイル / 地物: © OpenStreetMap contributors / 地名: 地理院タイル / 標高: 地理院タイル<br>登降は5mヒステリシスによる概算</p></section>
       </div>
       <footer class="sb-foot">${action('garmin', 'ガーミンへ送る', 'download', 'btn primary', 'garmin')}${action('export', 'GPX', 'download', 'btn', 'export')}${action('share', '共有', 'share', 'btn', 'share')}</footer>
     </aside>

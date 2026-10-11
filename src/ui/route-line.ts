@@ -26,7 +26,7 @@ export class RouteLine {
       const index = old.findIndex(leg => leg.key === def.key);
       const leg = index >= 0 ? old.splice(index, 1)[0] : {
         ...def,
-        casing: L.polyline([], { color: 'var(--route-casing)', weight: 11, interactive: false }).addTo(this.map),
+        casing: L.polyline([], { color: 'var(--route-casing)', weight: 11, opacity: 0.5, interactive: false }).addTo(this.map),
         line: L.polyline([], { color: 'var(--route)', className: 'route-line', interactive: false }).addTo(this.map),
       };
       if (leg.points !== def.points || leg.pending !== def.pending || index < 0) this.draw(leg, def.points, def.pending);
@@ -49,7 +49,7 @@ export class RouteLine {
   private draw(leg: Leg, points: Point[], pending: boolean) {
     leg.points = points; leg.pending = pending;
     leg.casing.setLatLngs(pending ? [] : latLngs(points));
-    leg.line.setLatLngs(latLngs(points)).setStyle({ weight: pending ? 4 : 6, opacity: pending ? 0.6 : 1, dashArray: pending ? '6 8' : undefined });
+    leg.line.setLatLngs(latLngs(points)).setStyle({ weight: pending ? 4 : 6, opacity: pending ? 0.6 : 0.7, dashArray: pending ? '6 8' : undefined });
   }
   private updateHit() { this.hit.setLatLngs(this.shapes.map(latLngs)); this.hit.bringToFront(); }
 }

@@ -5,19 +5,22 @@ import '@fontsource/noto-sans-jp/500.css';
 import '@fontsource/noto-sans-jp/700.css';
 import './style.css';
 import { createMap } from './map';
-import { CONFIG, type Profile } from './config';
+import { CONFIG, GSI_ATTRIBUTION, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
-import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import { LEG_MODE_LABELS, type LegMode, type RouteState, type Point, type Place } from './types';
-import { filterPlaces } from './places';
+import { filterPlaces, progressivePlaces } from './places';
+import { GsiPlaceProvider } from './gsi-places';
 import { OsmProvider } from './osm';
 import { preparePois } from './poi';
 import { installPoiUI } from './ui/poi';
 import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
+import { surfaceSpans, surfaceSummary, unknownSurface, type SurfaceSpan } from './surface';
+import { installChartMode } from './ui/chart-mode';
 import { generateGPX, parseGPX, gpxFilename } from './gpx';
 import { encodeRoute, consumeSharedRoute, loadRoute, saveRoute } from './persistence';
 import { cumulativeDistances } from './geo';
@@ -50,11 +53,15 @@ const line = routeLine.hit;
 const livePreview = new RoutePreview(router, state => routeLine.update(state), (index, segment) => routeLine.resolve(index, segment));
 const dem = new DemProvider();
 const osmProvider = new OsmProvider();
+const gsiPlaces = new GsiPlaceProvider(point => dem.elevation(point));
+map.attributionControl.addAttribution(`地名: ${GSI_ATTRIBUTION}`);
 const placeMarkers = L.layerGroup().addTo(map);
 const poiUI = installPoiUI(map, updateChart);
 let places: Place[] = [];
 const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
 let samples: Sample[] = [];
+let surfaces: SurfaceSpan[] = [];
+const chartMode = installChartMode(document, updateChart);
 let resolvedTrack: Point[] = [];
 let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
@@ -63,7 +70,7 @@ function syncExport() {
   document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy));
   if (readyRevision === revision && resolvedTrack.length >= 2) void preloadFit();
 }
-function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap); }
+function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap, chartMode.mode, surfaces); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
   places.forEach(place => {
@@ -85,33 +92,51 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   $('places-status').textContent = '峠・山を検索中…';
   poiUI.reset('補給・休憩を検索中…');
   const imported = history.value.importedPlaces?.length ? structuredClone(history.value.importedPlaces) : undefined;
-  try {
-    const result = await osmProvider.get(points, () => version === revision, retrying => {
-      if (version !== revision) return;
-      const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
-      status.set('osm', message, 'warn'); $('places-status').textContent = message; poiUI.message(message);
-    });
-    if (version !== revision) return;
-    poiUI.set(preparePois(result.pois), routeLength(points));
-    const found = imported ?? filterPlaces(result.places, points);
-    for (const place of found) {
-      if (version !== revision) return;
+  const current = () => version === revision;
+  const errors: string[] = [];
+  const publish = (found: Place[]) => {
+    places = imported ?? found; renderPlaces();
+    $('places-status').textContent = places.length ? '' : errors.join(' ') || 'ルート近傍に登録された峠・山は見つかりませんでした。';
+  };
+  const gsi = gsiPlaces.get(points, current).catch(error => {
+    if (current()) errors.push(error instanceof Error ? error.message : '地理院注記を取得できませんでした。');
+    return [];
+  }).then(async found => {
+    for (const place of imported ?? []) {
+      if (!current()) return [];
       if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
     }
-    if (version !== revision) return;
-    status.set('osm', ''); places = found; renderPlaces();
-    $('places-status').textContent = found.length ? '' : 'ルート近傍に登録された峠・山は見つかりませんでした。';
-  } catch (error) {
-    if (version !== revision) return;
-    const reason = error instanceof Error ? error.message : '';
-    places = imported ?? []; renderPlaces();
-    $('places-status').textContent = imported ? '' : '峠・山を取得できませんでした。' + reason;
-    poiUI.reset('補給・休憩を取得できませんでした。' + reason);
-    status.set('osm', 'OSM地物を取得できませんでした。' + reason, 'warn');
-  }
+    return found;
+  });
+  const osm = (async () => {
+    try {
+      const result = await osmProvider.get(points, current, retrying => {
+        if (!current()) return;
+        const message = retrying ? 'Overpassが混雑中。30秒後に1回だけ再試行します。' : 'Overpassが混雑中。取得を省略しました。';
+        status.set('osm', message, 'warn'); poiUI.message(message);
+      });
+      if (!current()) return [];
+      poiUI.set(preparePois(result.pois), routeLength(points));
+      const found = filterPlaces(result.places, points);
+      for (const place of found) {
+        if (!current()) return [];
+        if (place.ele == null) { place.ele = await dem.elevation(place); place.elevationSource = place.ele === null ? 'unknown' : 'DEM'; }
+      }
+      if (current()) status.set('osm', '');
+      return found;
+    } catch (error) {
+      if (!current()) return [];
+      const reason = error instanceof Error ? error.message : '';
+      errors.push('OSM地物を取得できませんでした。' + reason);
+      poiUI.reset('補給・休憩を取得できませんでした。' + reason);
+      status.set('osm', errors.at(-1)!, 'warn');
+      return [];
+    }
+  })();
+  await progressivePlaces(gsi, osm, publish, current);
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: 'road' as const });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: defaultLegMode('mtb') });
 const detours = new DetourSuggestions(router, status, $('waypoints'), () => history.value, change);
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
@@ -142,6 +167,8 @@ const calculate = debounce(async (version: number) => {
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   if (state.importedTrack || !state.legMode.some(mode => mode !== 'straight')) gsiUsage.update(state.legMode.includes('gsi'));
   segmentShapes = state.importedTrack ? [] : shapes;
+  surfaces = surfaceSpans(state.importedTrack || !state.legMode.some(mode => mode !== 'straight') ? unknownSurface(points) : points);
+  $('surface-summary').textContent = surfaceSummary(surfaces);
   $('summary').innerHTML = `${(routeLength(points) / 1000).toFixed(1)}<small>km</small>`;
   findPlaces(points, version);
   if (points.length < 2) { samples = []; renderStats(); status.set('elevation', ''); updateChart(); return; }
@@ -185,6 +212,7 @@ function render() {
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
   $('summary').innerHTML = '—<small>km</small>';
+  surfaces = []; $('surface-summary').textContent = '';
   status.set('notice', '');
   status.set('gsi', '');
   status.set('osm', '');
@@ -263,6 +291,7 @@ $('profile').onchange = () => {
   detours.clear();
   const profile = $<HTMLSelectElement>('profile').value as Profile;
   history.value = selectProfile(history.value, profile);
+  syncMode(history.value.mode);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === profile)));
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
   notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
@@ -274,7 +303,7 @@ function syncMode(mode: LegMode) {
 document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
   detours.clear();
   const mode = button.dataset.mode as LegMode;
-  history.value = { ...history.value, mode };
+  history.value = selectMode(history.value, mode);
   syncMode(mode);
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
   notify(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);

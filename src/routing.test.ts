@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Router, routingWarnings, segmentKey, isDetour } from './routing';
 import { ProfileRegistry } from './brouter-profiles';
-import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
 import { GsiRouter } from './gsi-router';
 import type { LegMode, RouteState, Segment } from './types';
 import * as geo from './geo';
@@ -15,7 +15,82 @@ function testRouter(fetcher?: typeof fetch) {
 }
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
+function surfaceResponse() { return new Response(JSON.stringify({ features: [{
+  geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.005], [135, 35.01]] },
+  properties: { messages: [['Longitude', 'Latitude', 'Distance', 'WayTags'], ['135000000', '35005000', '556', 'surface=asphalt'], ['135000000', '35010000', '556', 'surface=gravel']] },
+}] })); }
+it('attaches surface at BRouter boundaries and retains it in the segment cache', async () => {
+  const fetcher = vi.fn(async () => surfaceResponse()), router = testRouter(fetcher);
+  const result = await router.segment(points[0], points[1], 'road');
+  expect(result.points.map(p => p.surface ?? 'unknown')).toEqual(['unknown', 'paved', 'unpaved']);
+  expect(await router.segment(points[0], points[1], 'road')).toBe(result);
+  expect(router.cached(points[0], points[1], 'road')?.points).toEqual(result.points);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+it('keeps GSI, straight, fallback and GSI-requested BRouter rescue surfaces unknown', async () => {
+  const marked = points.slice(0, 2).map(p => ({ ...p, surface: 'paved' as const }));
+  const router = testRouter(vi.fn(async () => surfaceResponse()));
+  expect((await router.segment(marked[0], marked[1], 'mtb', 'straight')).points.every(p => !p.surface)).toBe(true);
+  vi.mocked(GsiRouter.prototype.route).mockResolvedValueOnce({ points: marked, fallback: false });
+  expect((await router.segment(marked[0], marked[1], 'mtb', 'gsi')).points.every(p => !p.surface)).toBe(true);
+  expect((await router.segment(marked[0], marked[1], 'road', 'gsi')).points.every(p => !p.surface)).toBe(true);
+  expect((await testRouter(vi.fn(async () => new Response('', { status: 400 }))).segment(marked[0], marked[1], 'road')).points.every(p => !p.surface)).toBe(true);
+});
 const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], mode: 'road' as const });
+it('selects profile defaults without changing existing legs and remembers manual modes per profile', () => {
+  const saved = new Map<string, string>();
+  vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+  const initial = mixedState();
+  let state = selectProfile(initial, 'mtb');
+  expect(state.mode).toBe('gsi');
+  expect(state.legMode).toEqual(initial.legMode); expect(state.legProfiles).toEqual(initial.legProfiles);
+  state = selectMode(state, 'straight');
+  state = selectProfile(state, 'road'); expect(state.mode).toBe('road');
+  state = selectMode(state, 'gsi');
+  state = selectProfile(state, 'gravel'); expect(state.mode).toBe('road');
+  state = selectProfile(state, 'mtb'); expect(state.mode).toBe('straight');
+  expect(defaultLegMode('road')).toBe('gsi');
+  expect(insertWaypoint(state, state.points.length, points[4]).legMode.at(-1)).toBe('straight');
+  expect(state.legMode).toEqual(initial.legMode);
+});
+it.each(['broken', null])('ignores invalid saved mode %s', saved => {
+  vi.stubGlobal('localStorage', { getItem: () => saved });
+  expect(defaultLegMode('mtb')).toBe('gsi'); expect(defaultLegMode('road')).toBe('road');
+});
+it('works when preference reads and writes throw', () => {
+  vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('quota'); } });
+  expect(defaultLegMode('mtb')).toBe('gsi');
+  expect(selectMode(mixedState(), 'gsi').mode).toBe('gsi');
+});
+it.each(['区間が長すぎます', '近くに道がありません', '道がつながりません'])('falls back from GSI (%s) to MTB and caches its warning', async error => {
+  const gsi = vi.mocked(GsiRouter.prototype.route).mockRejectedValue(new Error(error));
+  const fetcher = vi.fn(async () => { expect(gsi).toHaveBeenCalledOnce(); return response(); });
+  const router = testRouter(fetcher);
+  const result = await router.segment(points[0], points[1], 'mtb', 'gsi');
+  expect(result).toMatchObject({ fallback: false, brouterRescue: true, profileUsed: 'mtb-jp' });
+  expect(routingWarnings([result], 'mtb')).toContain('地理院の道で引けないため mtb-jp で計算しました');
+  expect(await router.segment(points[0], points[1], 'mtb', 'gsi')).toBe(result);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(router.cached(points[0], points[1], 'road', 'gsi')).toBeUndefined();
+});
+it.each([true, false])('tries GSI then MTB then trekking before straight (trekking success=%s)', async success => {
+  const order: string[] = [];
+  vi.mocked(GsiRouter.prototype.route).mockImplementation(async () => { order.push('gsi'); throw new Error('no path'); });
+  const router = testRouter(vi.fn(async url => {
+    const profile = new URL(String(url)).searchParams.get('profile')!; order.push(profile);
+    return success && profile === 'custom_2' ? response() : new Response('', { status: 400 });
+  }));
+  const result = await router.segment(points[0], points[1], 'mtb', 'gsi');
+  expect(order).toEqual(['gsi', 'custom_1', 'custom_2']);
+  expect(result.fallback).toBe(!success);
+  if (success) expect(routingWarnings([result], 'mtb')).toContain('地理院の道で引けないため trekking-jp で計算しました');
+  else expect(result.points).toEqual(points.slice(0, 2));
+});
+it.each([['road', 'custom_4'], ['gravel', 'custom_3']] as const)('uses the selected %s BRouter after GSI failure', async (profile, id) => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL) => response()), router = testRouter(fetcher);
+  expect((await router.segment(points[0], points[1], profile, 'gsi')).brouterRescue).toBe(true);
+  expect(new URL(String(fetcher.mock.calls[0]?.[0])).searchParams.get('profile')).toBe(id);
+});
 it.each([[1500, 500, false], [1500.01, 500, true], [2500, 1000, false], [2500.01, 1000, true]])('detour boundary L=%s D=%s', (length, direct, expected) => {
   expect(isDetour(length, direct)).toBe(expected);
 });
@@ -293,13 +368,14 @@ it('never requests straight legs, including when a road result is cached, and ke
   await expect(run([])).rejects.toThrow();
 });
 
-it('routes GSI without BRouter, ignores profile selection, and caches by mode', async () => {
+it('routes GSI without BRouter and caches by profile and mode', async () => {
   const fetcher = vi.fn(), router = testRouter(fetcher);
   const shape = [points[0], { lat: 35.004, lng: 135.002 }, points[1]];
   const gsi = vi.mocked(GsiRouter.prototype.route).mockResolvedValue({ points: shape, fallback: false });
   const result = await router.segment(points[0], points[1], 'mtb', 'gsi');
   expect(result).toEqual({ points: shape, fallback: false, gsi: true });
-  expect(await router.segment(points[0], points[1], 'road', 'gsi')).toBe(result);
+  expect(await router.segment(points[0], points[1], 'mtb', 'gsi')).toBe(result);
+  expect(router.cached(points[0], points[1], 'road', 'gsi')).toBeUndefined();
   expect(router.cached(points[0], points[1], 'mtb', 'road')).toBeUndefined();
   expect(gsi).toHaveBeenCalledOnce(); expect(fetcher).not.toHaveBeenCalled();
   expect(routingWarnings([result], 'mtb')).toEqual([]);
@@ -339,7 +415,7 @@ it('returns a straight line with a GSI error and retries failed GSI legs', async
   expect(routingWarnings([result], 'road')).toContain('地理院の道がつながっていません');
   expect(router.cached(points[0], points[1], 'road', 'gsi')).toBeUndefined();
   await router.segment(points[0], points[1], 'road', 'gsi');
-  expect(gsi).toHaveBeenCalledTimes(2); expect(fetcher).not.toHaveBeenCalled();
+  expect(gsi).toHaveBeenCalledTimes(2); expect(fetcher).toHaveBeenCalledTimes(2);
 });
 it('shares GSI work while retaining live consumers and drops cancelled results', async () => {
   let finish!: () => void, active!: () => boolean;
@@ -352,7 +428,7 @@ it('shares GSI work while retaining live consumers and drops cancelled results',
   const old = router.route(points.slice(0, 2), 'road', () => current, resolved, ['gsi']);
   await vi.waitFor(() => expect(gsi).toHaveBeenCalledOnce());
   current = false;
-  const live = router.route(points.slice(0, 2), 'mtb', undefined, undefined, ['gsi']);
+  const live = router.route(points.slice(0, 2), 'road', undefined, undefined, ['gsi']);
   expect(active()).toBe(true); finish();
   await Promise.all([old, live]);
   expect(resolved).not.toHaveBeenCalled(); expect(gsi).toHaveBeenCalledOnce();

@@ -3,8 +3,10 @@ import { elevationAt, gradeBins, gradeColor } from './grade';
 import { CONFIG } from './config';
 import type { Poi } from './types';
 import { layoutChartLabels, type ChartLabel } from './ui/chart-labels';
+import { surfaceAt, SURFACE_LABELS, type SurfaceSpan } from './surface';
+import type { ChartMode } from './ui/chart-mode';
 export type { ChartLabel } from './ui/chart-labels';
-export function drawChart(container: HTMLElement, samples: Sample[], onHover: (sample: Sample | null) => void, labels: ChartLabel[] = [], pois: Poi[] = [], gap: { from: number; to: number } | null = null) {
+export function drawChart(container: HTMLElement, samples: Sample[], onHover: (sample: Sample | null) => void, labels: ChartLabel[] = [], pois: Poi[] = [], gap: { from: number; to: number } | null = null, mode: ChartMode = 'surface', surfaces: SurfaceSpan[] = []) {
   container.replaceChildren(); onHover(null);
   const values = samples.flatMap(s => s.ele === null ? [] : [s.ele]);
   if (!values.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = '標高データはまだありません。'; container.append(empty); return; }
@@ -32,7 +34,7 @@ export function drawChart(container: HTMLElement, samples: Sample[], onHover: (s
   create('text', { x: W - 8, y: H - 6, 'text-anchor': 'end', 'font-size': 11, fill: '#666' }, 'km');
   const bins = gradeBins(samples);
   let si = 0;
-  for (const bin of bins) {
+  for (const bin of mode === 'grade' ? bins : []) {
     while (si < samples.length && samples[si].distance < bin.from) si++;
     let end = si; while (end < samples.length && samples[end].distance <= bin.to) end++;
     if (bin.grade !== null) {
@@ -42,6 +44,30 @@ export function drawChart(container: HTMLElement, samples: Sample[], onHover: (s
       create('polygon', { points: points.join(' '), fill: gradeColor(bin.grade) });
     }
     si = end;
+  }
+  if (mode === 'surface') {
+    const spans = surfaces.length ? surfaces : [{ from: 0, to: total, surface: 'unknown' as const }];
+    let index = 0;
+    let fill: SurfaceSpan['surface'] = 'unknown', fromEdge = 0, toEdge = 0, topPoints: string[] = [];
+    const flush = () => {
+      if (topPoints.length) create('polygon', { points: `${x(fromEdge)},${y(low)} ${topPoints.join(' ')} ${x(toEdge)},${y(low)}`, fill: `var(--surf-${fill})` });
+      topPoints = [];
+    };
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1], b = samples[i];
+      if (a.ele === null || b.ele === null) { flush(); continue; }
+      if (b.distance <= a.distance) continue;
+      while (index < spans.length && spans[index].to <= a.distance) index++;
+      for (let j = index; j < spans.length && spans[j].from < b.distance; j++) {
+        const span = spans[j], from = Math.max(a.distance, span.from), to = Math.min(b.distance, span.to);
+        if (to <= from) continue;
+        const at = (d: number) => a.ele! + (b.ele! - a.ele!) * (d - a.distance) / (b.distance - a.distance);
+        if (topPoints.length && (fill !== span.surface || toEdge !== from)) flush();
+        if (!topPoints.length) { fill = span.surface; fromEdge = from; topPoints.push(`${x(from)},${y(at(from))}`); }
+        topPoints.push(`${x(to)},${y(at(to))}`); toEdge = to;
+      }
+    }
+    flush();
   }
   let d = '', open = false;
   for (const sample of samples) { if (sample.ele === null) { open = false; continue; } d += `${open ? 'L' : 'M'}${x(sample.distance)} ${y(sample.ele)} `; open = true; }
@@ -64,8 +90,9 @@ export function drawChart(container: HTMLElement, samples: Sample[], onHover: (s
     cursor.setAttribute('x1', String(xx)); cursor.setAttribute('x2', String(xx)); cursor.setAttribute('visibility', 'visible');
     dot.setAttribute('visibility', sample.ele === null ? 'hidden' : 'visible'); dot.setAttribute('cx', String(xx)); dot.setAttribute('cy', String(y(sample.ele ?? low)));
     const grade = bins.find(b => sample.distance >= b.from && sample.distance <= b.to)?.grade ?? null;
-    readout.textContent = `${(sample.distance / 1000).toFixed(1)} km · ${sample.ele === null ? '—' : Math.round(sample.ele)} m · ${grade === null ? '—' : `${grade >= 0 ? '+' : ''}${grade.toFixed(1)}`}%`;
-    readout.style.left = `${Math.max(100, Math.min(W - 100, xx))}px`; readout.style.visibility = 'visible';
+    readout.textContent = `${(sample.distance / 1000).toFixed(1)} km · ${sample.ele === null ? '—' : Math.round(sample.ele)} m · ${grade === null ? '—' : `${grade >= 0 ? '+' : ''}${grade.toFixed(1)}`}% · ${SURFACE_LABELS[surfaceAt(surfaces, sample.distance)]}`;
+    const half = Math.min(W / 2, readout.offsetWidth / 2 || 140);
+    readout.style.left = `${Math.max(half, Math.min(W - half, xx))}px`; readout.style.visibility = 'visible';
     svg.setAttribute('aria-valuenow', String(index)); svg.setAttribute('aria-valuetext', readout.textContent); onHover(sample);
   };
   const hide = () => { cursor.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); readout.style.visibility = 'hidden'; onHover(null); };

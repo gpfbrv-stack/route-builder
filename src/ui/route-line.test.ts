@@ -31,7 +31,8 @@ it('keeps the exact routed path and Leaflet element when appending, replacing on
   const addedCurve = [initial.points[1], { lat: 35.02, lng: 135.02 }, state().points[2]];
   view.resolve(1, { points: addedCurve, fallback: false });
   expect(paths()[1].hasAttribute('stroke-dasharray')).toBe(false);
-  expect(paths()[1].getAttribute('stroke-opacity')).toBe('1');
+  expect(paths()[1].getAttribute('stroke-opacity')).toBe('0.7');
+  expect(document.querySelector('path[stroke="var(--route-casing)"]')!.getAttribute('stroke-opacity')).toBe('0.5');
   expect(paths()[0]).toBe(original); expect(view.shapes[1]).toEqual(addedCurve);
   expect(view.hit.options).toMatchObject({ weight: 24, opacity: 0, interactive: true });
 });
@@ -100,5 +101,5 @@ it('draws GSI dashed while pending and restores its own cached geometry without 
   expect(view.shapes[1]).toEqual(initial.points.slice(1));
   const original = paths()[0];
   view.update({ ...initial, legProfiles: ['gravel', 'road'], mode: 'road' });
-  expect(paths()[0]).toBe(original); expect(view.shapes[0]).toEqual(curve);
+  expect(paths()[0]).not.toBe(original); expect(view.shapes[0]).toEqual(curve);
 });

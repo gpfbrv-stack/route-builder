@@ -9,6 +9,7 @@
   /* ルート・勾配(地図/グラフ専用) */
   --route: #0017c1; --route-casing: #ffffff;
   --g0: #c5d7fb; --g3: #ffc94d; --g6: #ff8a2b; --g9: #d9361e; --g12: #7a0e0e; --gdown: #d9d9d9;
+  --surf-paved: #8a94a6; --surf-unpaved: #b0763a; --surf-unknown: #d9d9d9;
   --radius: 8px; --sp1: 8px; --sp2: 16px; --sp3: 24px;
   --sidebar-w: 400px;
   font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
@@ -84,9 +85,14 @@ button, input, select { font: inherit; color: inherit; }
 .section-head small { font-size: 12px; color: var(--text-2); }
 
 /* 標高グラフ */
+.surface-summary { margin: -8px 0 16px; font-size: 12px; overflow-wrap: anywhere; }
+.surface-summary:empty { display: none; }
+.chart-head { flex-wrap: wrap; gap: 8px; align-items: center; }
+.chart-mode { grid-template-columns: repeat(2, 1fr); width: 136px; margin-left: auto; }
+.chart-head small { flex-basis: 100%; }
 .chart { position: relative; touch-action: pan-y; user-select: none; }
 .chart svg { display: block; width: 100%; height: 168px; }
-.chart .readout { position: absolute; top: 0; padding: 2px 8px; font-size: 12px; background: var(--text); color: #fff; border-radius: 4px; pointer-events: none; white-space: nowrap; transform: translateX(-50%); visibility: hidden; }
+.chart .readout { position: absolute; top: 0; padding: 2px 8px; font-size: 12px; background: var(--text); color: #fff; border-radius: 4px; pointer-events: none; max-width: 100%; overflow-wrap: anywhere; transform: translateX(-50%); visibility: hidden; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: var(--sp1); font-size: 12px; color: var(--text-2); }
 .legend i { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
 
@@ -146,7 +152,7 @@ details[open] .chev { transform: rotate(180deg); }
 .layer-grid button:disabled { opacity: .4; cursor: default; }
 
 /* 地図マーカー */
-.wp-marker { width: 28px; height: 28px; border-radius: 50%; background: var(--primary); color: #fff; border: 3px solid #fff; display: grid; place-items: center; font: 700 12px/1 "Noto Sans JP", sans-serif; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.wp-marker { width: 20px; height: 20px; margin: 4px; border-radius: 50%; background: var(--primary); color: #fff; border: 2px solid #fff; display: grid; place-items: center; font: 700 11px/1 "Noto Sans JP", sans-serif; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .wp-marker.start { background: var(--success); } .wp-marker.goal { background: var(--text); }
 .pass-label { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px 2px 4px; background: #fff; border: 1.5px solid var(--text); border-radius: 6px; font: 700 13px/1.5 "Noto Sans JP", sans-serif; white-space: nowrap; color: var(--text); transform: translate(-50%, calc(-100% - 10px)); width: max-content; }
 .pass-label b { font-weight: 500; font-size: 12px; color: var(--text-2); }
