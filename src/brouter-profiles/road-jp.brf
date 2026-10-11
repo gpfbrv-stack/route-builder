@@ -5,6 +5,8 @@
 # Changes: trunk 1.0 / primary 1.0 / secondary 1.05 / tertiary 1.1 / unclassified 1.4 / residential 1.5 /
 #   service 1.6 (paved); consider_traffic 0.1 -> 0.0; turncost 90 -> 250.
 # motorway / motorroad=yes stay forbidden (defaultaccess).
+# downhillcost 60 -> 15: the stock value avoided main roads that dip into valleys (Saku: south detour
+#   instead of the straight prefectural road along the Chikuma valley).
 # Road: paved track grade1 1.2 -> 2.5, paved path/footway 2.0 -> 5.0, designated bike path 1.2 -> 1.5.
 #   Nagakubo (route 142): road-class switches 10 -> 4, trunk 1.3 km -> 3.2 km.
 # A fastbike could be a racing bike or a speed pedelec.
@@ -42,7 +44,7 @@ assign consider_town         = false  # %consider_town% | Activate to bypass cit
 
 # Change elevation parameters
 assign consider_elevation = true  # %consider_elevation% | Set to false to ignore elevation in routing | boolean
-assign downhillcost       = 60    # %downhillcost% | Cost for going downhill | number
+assign downhillcost       = 15    # %downhillcost% | Cost for going downhill | number
 assign downhillcutoff     = 1.5   # %downhillcutoff% | Gradients below this value in percents are not counted. | number
 assign uphillcost         = 0     # %uphillcost% | Cost for going uphill | number
 assign uphillcutoff       = 1.5   # %uphillcutoff% | Gradients below this value in percents are not counted.  | number

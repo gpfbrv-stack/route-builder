@@ -5,6 +5,8 @@
 # Changes: trunk 1.0 / primary 1.0 / secondary 1.05 / tertiary 1.1 / unclassified 1.4 / residential 1.5 /
 #   service 1.6 (paved); consider_traffic 0.1 -> 0.0; turncost 90 -> 250.
 # motorway / motorroad=yes stay forbidden (defaultaccess).
+# downhillcost 60 -> 15: the stock value avoided main roads that dip into valleys (Saku: south detour
+#   instead of the straight prefectural road along the Chikuma valley).
 # Gravel: same as road-jp but unpaved is tolerated: unpaved unclassified/residential/service 2.0-2.2,
 #   track grade1 1.6-1.8 / grade2 2.0-2.2 / grade3 3.5 / grade4 6 / grade5 10, path 3-4.
 #   Saku: switches 7 -> 2, 7.5 -> 6.9 km. (Previously based on gravel.brf, which zig-zagged off main roads.)
@@ -43,7 +45,7 @@ assign consider_town         = false  # %consider_town% | Activate to bypass cit
 
 # Change elevation parameters
 assign consider_elevation = true  # %consider_elevation% | Set to false to ignore elevation in routing | boolean
-assign downhillcost       = 60    # %downhillcost% | Cost for going downhill | number
+assign downhillcost       = 15    # %downhillcost% | Cost for going downhill | number
 assign downhillcutoff     = 1.5   # %downhillcutoff% | Gradients below this value in percents are not counted. | number
 assign uphillcost         = 0     # %uphillcost% | Cost for going uphill | number
 assign uphillcutoff       = 1.5   # %uphillcutoff% | Gradients below this value in percents are not counted.  | number
