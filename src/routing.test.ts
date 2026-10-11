@@ -15,6 +15,27 @@ function testRouter(fetcher?: typeof fetch) {
 }
 const points = Array.from({ length: 5 }, (_, i) => ({ lat: 35 + i / 100, lng: 135 }));
 function response() { return new Response(JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.01]] } }] })); }
+function surfaceResponse() { return new Response(JSON.stringify({ features: [{
+  geometry: { type: 'LineString', coordinates: [[135, 35], [135, 35.005], [135, 35.01]] },
+  properties: { messages: [['Longitude', 'Latitude', 'Distance', 'WayTags'], ['135000000', '35005000', '556', 'surface=asphalt'], ['135000000', '35010000', '556', 'surface=gravel']] },
+}] })); }
+it('attaches surface at BRouter boundaries and retains it in the segment cache', async () => {
+  const fetcher = vi.fn(async () => surfaceResponse()), router = testRouter(fetcher);
+  const result = await router.segment(points[0], points[1], 'road');
+  expect(result.points.map(p => p.surface ?? 'unknown')).toEqual(['unknown', 'paved', 'unpaved']);
+  expect(await router.segment(points[0], points[1], 'road')).toBe(result);
+  expect(router.cached(points[0], points[1], 'road')?.points).toEqual(result.points);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+it('keeps GSI, straight, fallback and GSI-requested BRouter rescue surfaces unknown', async () => {
+  const marked = points.slice(0, 2).map(p => ({ ...p, surface: 'paved' as const }));
+  const router = testRouter(vi.fn(async () => surfaceResponse()));
+  expect((await router.segment(marked[0], marked[1], 'mtb', 'straight')).points.every(p => !p.surface)).toBe(true);
+  vi.mocked(GsiRouter.prototype.route).mockResolvedValueOnce({ points: marked, fallback: false });
+  expect((await router.segment(marked[0], marked[1], 'mtb', 'gsi')).points.every(p => !p.surface)).toBe(true);
+  expect((await router.segment(marked[0], marked[1], 'road', 'gsi')).points.every(p => !p.surface)).toBe(true);
+  expect((await testRouter(vi.fn(async () => new Response('', { status: 400 }))).segment(marked[0], marked[1], 'road')).points.every(p => !p.surface)).toBe(true);
+});
 const mixedState = (): RouteState => ({ name: 'mixed', points: points.slice(0, 4), profile: 'gravel', legProfiles: ['mtb', 'road', 'gravel'], legMode: ['road', 'straight', 'road'], mode: 'road' as const });
 it('selects profile defaults without changing existing legs and remembers manual modes per profile', () => {
   const saved = new Map<string, string>();

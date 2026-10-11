@@ -21,7 +21,7 @@ vi.mock('../routing', async importOriginal => {
     route: InstanceType<typeof actual.Router>['route'] = async (points, _profiles, current = () => true, resolved, modes) => {
       captured.routeCalls++;
       return points.slice(1).map((p, i) => {
-        const segment = { points: [points[i], p], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi' };
+        const segment = { points: [points[i], { ...p, surface: modes?.[i] === 'road' ? 'paved' as const : undefined }], fallback: captured.straight && i === 0, profileUsed: captured.alternative ? 'trekking' : undefined, gsi: modes?.[i] === 'gsi' };
         if (current()) resolved?.(i, segment);
         return segment;
       });
@@ -72,6 +72,15 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(button('.controls [data-mode="road"]').getAttribute('aria-pressed')).toBe('true');
   for (const [lat, lng] of [[35.15, 135.78], [35.1587, 135.7861]]) captured.map!.fire('click', { latlng: { lat, lng } });
   expect(state().points).toHaveLength(2); expect(button('#export').disabled).toBe(true); await settle();
+  expect(document.getElementById('surface-summary')!.textContent).toMatch(/^舗装 [\d.]+km$/);
+  expect(document.querySelector('#chart polygon')!.getAttribute('fill')).toBe('var(--surf-paved)');
+  const callsBeforeChartMode = captured.routeCalls;
+  button('[data-chart-mode="grade"]').click(); await settle();
+  expect(document.querySelector('#chart polygon')!.getAttribute('fill')).toContain('var(--g');
+  expect(document.querySelector('#chart-legend')!.textContent).toContain('下り');
+  expect(captured.routeCalls).toBe(callsBeforeChartMode);
+  button('[data-chart-mode="surface"]').click();
+  expect(document.querySelector('#chart polygon')!.getAttribute('fill')).toBe('var(--surf-paved)');
   expect(document.querySelector('.pass-label')!.textContent).toContain('花脊峠750m');
   expect(document.getElementById('places')!.textContent).toContain('750 m');
   expect(document.querySelector('#chart svg')!.textContent).toContain('花脊峠');
@@ -297,6 +306,7 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(document.querySelector('.chart-gap')!.getAttribute('width')).toBe(gapWidth);
   button('#clear').click();
   expectExportsDisabled(true);
+  expect(document.getElementById('surface-summary')!.textContent).toBe('');
   expect(document.querySelector('.chart-gap')).toBeNull();
   expect(document.getElementById('poi-status')!.textContent).toContain('ルートを描くと');
   // Exercise the main.ts wiring, including persistence, one-step Undo and clearing.

@@ -19,6 +19,8 @@ import { installPoiUI } from './ui/poi';
 import { DemProvider } from './dem';
 import { elevationStats, sampleRoute, type Sample } from './elevation';
 import { drawChart } from './chart';
+import { surfaceSpans, surfaceSummary, unknownSurface, type SurfaceSpan } from './surface';
+import { installChartMode } from './ui/chart-mode';
 import { generateGPX, parseGPX, gpxFilename } from './gpx';
 import { encodeRoute, consumeSharedRoute, loadRoute, saveRoute } from './persistence';
 import { cumulativeDistances } from './geo';
@@ -58,6 +60,8 @@ const poiUI = installPoiUI(map, updateChart);
 let places: Place[] = [];
 const cursor = L.marker([0, 0], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="cursor-dot"></div>' }) });
 let samples: Sample[] = [];
+let surfaces: SurfaceSpan[] = [];
+const chartMode = installChartMode(document, updateChart);
 let resolvedTrack: Point[] = [];
 let segmentShapes: Point[][] = [];
 let readyRevision = -1, placesRevision = -1;
@@ -66,7 +70,7 @@ function syncExport() {
   document.querySelectorAll<HTMLButtonElement>('[data-action="export"], [data-action="garmin"]').forEach(b => b.disabled = readyRevision !== revision || placesRevision !== revision || resolvedTrack.length < 2 || (b.dataset.action === 'garmin' && garminBusy));
   if (readyRevision === revision && resolvedTrack.length >= 2) void preloadFit();
 }
-function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap); }
+function updateChart() { drawChart($('chart'), samples, sample => { if (sample) cursor.setLatLng([sample.lat, sample.lng]).addTo(map); else cursor.remove(); }, places, poiUI.chartPois, poiUI.gap, chartMode.mode, surfaces); }
 function renderPlaces() {
   placeMarkers.clearLayers(); $('places').replaceChildren();
   places.forEach(place => {
@@ -163,6 +167,8 @@ const calculate = debounce(async (version: number) => {
   } else notify(points.length < 2 ? '地図上に2点以上を置いてください。' : '直線モードで表示しています。');
   if (state.importedTrack || !state.legMode.some(mode => mode !== 'straight')) gsiUsage.update(state.legMode.includes('gsi'));
   segmentShapes = state.importedTrack ? [] : shapes;
+  surfaces = surfaceSpans(state.importedTrack || !state.legMode.some(mode => mode !== 'straight') ? unknownSurface(points) : points);
+  $('surface-summary').textContent = surfaceSummary(surfaces);
   $('summary').innerHTML = `${(routeLength(points) / 1000).toFixed(1)}<small>km</small>`;
   findPlaces(points, version);
   if (points.length < 2) { samples = []; renderStats(); status.set('elevation', ''); updateChart(); return; }
@@ -206,6 +212,7 @@ function render() {
   revision++;
   readyRevision = placesRevision = -1; resolvedTrack = []; syncExport();
   $('summary').innerHTML = '—<small>km</small>';
+  surfaces = []; $('surface-summary').textContent = '';
   status.set('notice', '');
   status.set('gsi', '');
   status.set('osm', '');
