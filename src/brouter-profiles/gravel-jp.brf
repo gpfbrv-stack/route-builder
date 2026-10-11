@@ -1,6 +1,10 @@
 # gravel-jp
 # Japan-tuned copy of BRouter gravel.brf (https://brouter.de/brouter/profiles2/gravel.brf, MIT).
 # Change: trunk cost 20/80 -> 4.8 (same as primary)
+# Change: road-class factors compressed: trunk/primary 4.8 -> 1.6, secondary 4.2 -> 1.5, tertiary 3.6 -> 1.4,
+#   unclassified/road/living/residential/service 1.8-2.8 -> 1.3 (service=* 1.5); track stays 1.0.
+# Change: smoothness: surface=paved 1.4 -> 1.1 (same as asphalt); untagged trunk 1.6 -> 1.0 (like primary).
+#   Without these, gravel left route 142 near Wada pass for ~1 km side roads (6.9 -> 6.7 km).
 # Reason: OSM Japan tags ordinary national routes (kokudo) as highway=trunk; the
 # Europe-tuned trunk penalty caused long detours. motorway / motorroad=yes stay forbidden.
 # "gravel.brf" -- Version 28.04.2024
@@ -109,7 +113,7 @@ assign smoothnesspenalty
         switch concrete=plates|lanes                        switch not assume_wet_conditions 1.2 1.2
         switch surface=fine_gravel|compacted                switch not assume_wet_conditions 1.2 1.2
         switch surface=concrete|paving_stones               switch not assume_wet_conditions 1.3 1.3
-        switch surface=paved                                switch not assume_wet_conditions 1.4 1.4
+        switch surface=paved                                switch not assume_wet_conditions 1.1 1.1
         switch surface=gravel                               switch not assume_wet_conditions 1.5 1.5
         switch surface=wood|metal                           switch not assume_wet_conditions 1.6 2.0
         switch surface=cobblestone|sett                     switch not assume_wet_conditions 1.7 2.5
@@ -124,7 +128,7 @@ assign smoothnesspenalty
                 switch tracktype=grade5    switch not assume_wet_conditions 2.8 4.4
                                            switch not assume_wet_conditions 3.6 6.2   # assume the worst
         # estimate smoothness off highway type
-        switch highway=primary|primary_link|secondary|secondary_link|tertiary|tertiary_link    1.0
+        switch highway=trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link    1.0
         switch highway=service|unclassified|living_street|residential                          1.1
         switch highway=cycleway                                                                1.2
         # handle non-specific tags last
@@ -269,18 +273,18 @@ assign costfactor
     switch or highway=motorway|motorway_link motorroad=yes      10000
     switch    and nobikeaccess nofootaccess                     10000
     switch    highway= switch not route=ferry                   10000 2
-    switch    highway=trunk|trunk_link                          4.8
+    switch    highway=trunk|trunk_link                          1.6
     switch    highway=bridleway|raceway switch not bicycle=yes  20 5
     switch    highway=pedestrian switch not bicycle=yes         8 3
-    switch    highway=primary|primary_link                      4.8
-    switch    highway=secondary|secondary_link                  4.2
-    switch    highway=tertiary|tertiary_link                    3.6
+    switch    highway=primary|primary_link                      1.6
+    switch    highway=secondary|secondary_link                  1.5
+    switch    highway=tertiary|tertiary_link                    1.4
     switch    highway=corridor                                  3.2
-    switch    highway=road                                      2.8
-    switch    highway=unclassified switch not any_cycleroute    2.6 1.4
-    switch    highway=living_street                             2.5
-    switch    highway=service switch service=                   2.4 3.0
-    switch    highway=residential switch not maxspeed=30        2.2 1.8
+    switch    highway=road                                      1.3
+    switch    highway=unclassified switch not any_cycleroute    1.3 1.3
+    switch    highway=living_street                             1.3
+    switch    highway=service switch service=                   1.3 1.5
+    switch    highway=residential switch not maxspeed=30        1.3 1.3
     switch    highway=track                                     1.0
     switch    highway=path                                      pathpenalty
     switch    highway=steps                                     stepspenalty
