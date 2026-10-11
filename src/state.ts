@@ -1,5 +1,18 @@
-import type { Profile } from './config';
-import type { Point, RouteState } from './types';
+import { DEFAULT_LEG_MODES, type Profile } from './config';
+import type { LegMode, Point, RouteState } from './types';
+
+export function defaultLegMode(profile: Profile): LegMode {
+  try {
+    const saved = localStorage.getItem(`route-builder:leg-mode:${profile}`);
+    if (saved === 'road' || saved === 'gsi' || saved === 'straight') return saved;
+  } catch { /* Storage may be unavailable. */ }
+  return DEFAULT_LEG_MODES[profile];
+}
+export function selectMode(state: RouteState, mode: LegMode): RouteState {
+  try { localStorage.setItem(`route-builder:leg-mode:${state.profile}`, mode); }
+  catch { /* The selection still works without persistence. */ }
+  return { ...state, mode };
+}
 
 /** Insertion inside a leg splits its profile; appending uses the current selection. */
 export function insertWaypoint(state: RouteState, index: number, point: Point): RouteState {
@@ -18,7 +31,7 @@ export function removeWaypoint(state: RouteState, index: number): RouteState {
   legMode.splice(Math.min(index, legMode.length - 1), 1);
   return { ...state, points, legProfiles, legMode };
 }
-export function selectProfile(state: RouteState, profile: Profile): RouteState { return { ...state, profile }; }
+export function selectProfile(state: RouteState, profile: Profile): RouteState { return { ...state, profile, mode: defaultLegMode(profile) }; }
 export function reprofile(state: RouteState, index?: number): RouteState {
   return { ...state, legProfiles: state.legProfiles.map((profile, i) => index === undefined || i === index ? state.profile : profile),
     legMode: state.legMode.map((mode, i) => index === undefined || i === index ? state.mode : mode) };

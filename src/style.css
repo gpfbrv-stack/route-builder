@@ -146,7 +146,7 @@ details[open] .chev { transform: rotate(180deg); }
 .layer-grid button:disabled { opacity: .4; cursor: default; }
 
 /* 地図マーカー */
-.wp-marker { width: 28px; height: 28px; border-radius: 50%; background: var(--primary); color: #fff; border: 3px solid #fff; display: grid; place-items: center; font: 700 12px/1 "Noto Sans JP", sans-serif; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.wp-marker { width: 20px; height: 20px; margin: 4px; border-radius: 50%; background: var(--primary); color: #fff; border: 2px solid #fff; display: grid; place-items: center; font: 700 11px/1 "Noto Sans JP", sans-serif; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .wp-marker.start { background: var(--success); } .wp-marker.goal { background: var(--text); }
 .pass-label { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px 2px 4px; background: #fff; border: 1.5px solid var(--text); border-radius: 6px; font: 700 13px/1.5 "Noto Sans JP", sans-serif; white-space: nowrap; color: var(--text); transform: translate(-50%, calc(-100% - 10px)); width: max-content; }
 .pass-label b { font-weight: 500; font-size: 12px; color: var(--text-2); }

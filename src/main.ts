@@ -8,7 +8,7 @@ import { createMap } from './map';
 import { CONFIG, type Profile } from './config';
 import { debounce } from './async';
 import { Router, joinSegments, routingWarnings } from './routing';
-import { History, insertWaypoint, removeWaypoint, selectProfile, reprofile } from './state';
+import { History, insertWaypoint, removeWaypoint, selectProfile, selectMode, defaultLegMode, reprofile } from './state';
 import { routeLength, nearestOnRoute, distance } from './geo';
 import { LEG_MODE_LABELS, type LegMode, type RouteState, type Point, type Place } from './types';
 import { filterPlaces } from './places';
@@ -111,7 +111,7 @@ const findPlaces = debounce(async (points: Point[], version: number) => {
   }
   if (version === revision) { placesRevision = version; syncExport(); }
 }, CONFIG.places.debounceMs);
-const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: 'road' as const });
+const history = new History({ name: '新しいルート', points: [], profile: 'mtb', legProfiles: [], legMode: [], mode: defaultLegMode('mtb') });
 const detours = new DetourSuggestions(router, status, $('waypoints'), () => history.value, change);
 let revision = 0;
 function notify(message: string, kind: StatusKind = 'info') { status.set('notice', message, kind); }
@@ -263,6 +263,7 @@ $('profile').onchange = () => {
   detours.clear();
   const profile = $<HTMLSelectElement>('profile').value as Profile;
   history.value = selectProfile(history.value, profile);
+  syncMode(history.value.mode);
   document.querySelectorAll<HTMLButtonElement>('[data-profile]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.profile === profile)));
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
   notify(`これから引く区間を${CONFIG.profiles[profile].label}で計算します`);
@@ -274,7 +275,7 @@ function syncMode(mode: LegMode) {
 document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
   detours.clear();
   const mode = button.dataset.mode as LegMode;
-  history.value = { ...history.value, mode };
+  history.value = selectMode(history.value, mode);
   syncMode(mode);
   status.set('storage', saveRoute(history.value) ? '' : '自動保存できません。', 'warn');
   notify(`これから引く区間を${LEG_MODE_LABELS[mode]}で引きます`);

@@ -21,6 +21,7 @@ export const CONFIG = {
   },
 };
 export type Profile = keyof typeof CONFIG.profiles;
+export const DEFAULT_LEG_MODES = { mtb: 'gsi', gravel: 'road', road: 'road' } as const;
 export const BASE_LAYERS = [
   { name: '地理院 標準', url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', maxNativeZoom: 18, attribution: GSI_ATTRIBUTION },
   { name: '地理院 淡色', url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', maxNativeZoom: 18, attribution: GSI_ATTRIBUTION },

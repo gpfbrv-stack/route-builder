@@ -58,6 +58,15 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   expect(button('#export').disabled).toBe(true);
   expectExportsDisabled(true);
   expect(document.getElementById('layer-pop')!.textContent).not.toContain('Google');
+  expect(button('.controls [data-mode="gsi"]').getAttribute('aria-pressed')).toBe('true');
+  button('[data-profile="gravel"]').click();
+  expect(button('.controls [data-mode="road"]').getAttribute('aria-pressed')).toBe('true');
+  button('[data-profile="mtb"]').click();
+  expect(button('.controls [data-mode="gsi"]').getAttribute('aria-pressed')).toBe('true');
+  button('.controls [data-mode="road"]').click();
+  button('[data-profile="road"]').click();
+  button('[data-profile="mtb"]').click();
+  expect(button('.controls [data-mode="road"]').getAttribute('aria-pressed')).toBe('true');
   for (const [lat, lng] of [[35.15, 135.78], [35.1587, 135.7861]]) captured.map!.fire('click', { latlng: { lat, lng } });
   expect(state().points).toHaveLength(2); expect(button('#export').disabled).toBe(true); await settle();
   expect(button('#export').disabled).toBe(false); expect(document.querySelector('.wp-marker.start')!.textContent).toBe('S'); expect(document.querySelector('.wp-marker.goal')!.textContent).toBe('G');

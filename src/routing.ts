@@ -6,7 +6,7 @@ import { ProfileRegistry } from './brouter-profiles';
 import { GsiRouter } from './gsi-router';
 
 export function segmentKey(a: Point, b: Point, profile: Profile, mode: LegMode = 'road') {
-  return `${mode === 'road' ? profile : '-'}:${mode}:${a.lng.toFixed(6)},${a.lat.toFixed(6)}|${b.lng.toFixed(6)},${b.lat.toFixed(6)}`;
+  return `${mode === 'straight' ? '-' : profile}:${mode}:${a.lng.toFixed(6)},${a.lat.toFixed(6)}|${b.lng.toFixed(6)},${b.lat.toFixed(6)}`;
 }
 export class Router {
   private detourQueue = new RequestQueue(1);
@@ -22,7 +22,7 @@ export class Router {
       try {
         const alternative = await this.segment(a, b, profile, 'gsi', current);
         const gsiM = routeLength(alternative.points);
-        if (current() && !alternative.fallback && gsiM < 0.6 * osmM) {
+        if (current() && alternative.gsi && !alternative.fallback && gsiM < 0.6 * osmM) {
           return { osmM, gsiM, key: JSON.stringify([segmentKey(a, b, profile), segment.points, alternative.points]) };
         }
       } catch { /* Background comparison must never interrupt routing. */ }
@@ -51,11 +51,13 @@ export class Router {
     };
     const promise = this.queue.run(async () => {
       if (!active()) throw new DOMException('経路計算を中止しました', 'AbortError');
-      if (mode === 'gsi') return gsiSegment(false);
+      const failedGsi = mode === 'gsi' ? await gsiSegment(false) : undefined;
+      if (failedGsi && !failedGsi.fallback) return failedGsi;
       const requested = CONFIG.profiles[profile];
       const profiles = [{ custom: requested.custom, api: requested.api },
         ...('fallback' in requested ? requested.fallback.slice(0, 1).map(custom => ({ custom, api: 'trekking' })) : [])];
       for (const candidate of profiles) {
+        if (!active()) throw new DOMException('経路計算を中止しました', 'AbortError');
         try {
           let api: string;
           let standardProfile = false;
@@ -75,12 +77,13 @@ export class Router {
           const points: Point[] = geometry.coordinates.map((c: number[]) => ({ lng: c[0], lat: c[1] }));
           if (points.length < 2 || !points.every(validPoint)) throw new Error('Invalid coordinates');
           const segment: Segment = { points, fallback: false, profileUsed: standardProfile ? candidate.api : candidate.custom,
+            ...(failedGsi ? { brouterRescue: true } : {}),
             ...(standardProfile ? { standardProfile: true } : {}) };
           cacheSet(this.cache, key, segment, CONFIG.routing.cacheSize);
           return segment;
         } catch { /* Try the configured alternative, then GSI, before a straight line. */ }
       }
-      return gsiSegment(true);
+      return failedGsi ?? gsiSegment(true);
     }).finally(() => this.pending.delete(key));
     this.pending.set(key, { promise, consumers });
     return promise;
@@ -115,6 +118,7 @@ export function routingWarnings(segments: Segment[], profiles: Profile | Profile
   if (segments.some(s => s.fallback)) warnings.push('一部区間を取得できませんでした。該当区間は直線で表示しています。');
   warnings.push(...new Set(segments.flatMap(s => s.error ? [s.error] : [])));
   if (segments.some(s => s.gsiRescue)) warnings.push('OSMで経路が見つからないため地理院の道で計算しました');
+  warnings.push(...new Set(segments.filter(s => s.brouterRescue).map(s => `地理院の道で引けないため ${s.profileUsed} で計算しました`)));
   if (segments.some(s => s.standardProfile)) warnings.push('日本向け設定を使えず標準設定で計算しました');
   const alternatives = [...new Set(segments.filter((s, i) => {
     const requested = CONFIG.profiles[typeof profiles === 'string' ? profiles : profiles[i]];
