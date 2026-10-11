@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Decoder, Stream } from '@garmin/fitsdk';
-import { sendGarminCourse, installGarminDialog } from './garmin';
+import { sendGarminCourse, installGarminDialog, preloadFit } from './garmin';
 import { mountUI } from './layout';
 import { gpxFilename } from '../gpx';
 
 const input = { name: '花脊/試走', profile: 'mtb' as const, resolvedTrack: [{ lat: 35, lng: 135, ele: 123.4 }, { lat: 35.01, lng: 135.01, ele: 145 }] };
-const share = vi.fn(), canShare = vi.fn(), show = vi.fn();
+const share = vi.fn(), canShare = vi.fn(), show = vi.fn(), matchMedia = vi.fn();
 let downloaded: string;
 beforeEach(() => {
   localStorage.clear(); document.body.innerHTML = '<div id="app"></div>'; mountUI();
   share.mockReset().mockResolvedValue(undefined); canShare.mockReset().mockReturnValue(false); show.mockReset();
   vi.stubGlobal('navigator', { share, canShare });
+  matchMedia.mockReset().mockReturnValue({ matches: true });
+  vi.stubGlobal('matchMedia', matchMedia);
   vi.stubGlobal('URL', class extends URL {
     static createObjectURL = vi.fn(() => 'blob:fit');
     static revokeObjectURL = vi.fn();
@@ -43,6 +45,21 @@ it('shares a valid FIT File after loading the encoder, with its title and the GP
   expect(messages.recordMesgs).toHaveLength(2); expect(messages.recordMesgs![0].altitude).toBeCloseTo(123.4);
   expect(show).not.toHaveBeenCalled(); expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
+it('calls share synchronously with a generated FIT when the encoder is preloaded', async () => {
+  await preloadFit(); canShare.mockReturnValue(true);
+  const sending = sendGarminCourse(input, show);
+  expect(share).toHaveBeenCalledOnce();
+  expect(share.mock.calls[0][0].files[0].size).toBeGreaterThan(0);
+  await expect(sending).resolves.toBe('shared');
+});
+it('downloads on a fine pointer PC even when file sharing is supported', async () => {
+  matchMedia.mockReturnValue({ matches: false }); canShare.mockReturnValue(true);
+  await expect(sendGarminCourse(input, show)).resolves.toBe('downloaded');
+  expect(matchMedia).toHaveBeenCalledWith('(pointer: coarse)');
+  expect(share).not.toHaveBeenCalled(); expect(canShare).not.toHaveBeenCalled();
+  expect(downloaded).toBe(gpxFilename(input.name).replace(/\.gpx$/, '.fit'));
+  expect(show).toHaveBeenCalledOnce();
+});
 it.each([false, undefined])('downloads and shows instructions when canShare is %s', async capability => {
   vi.useFakeTimers(); if (capability === undefined) vi.stubGlobal('navigator', {});
   await sendGarminCourse(input, show);
@@ -56,10 +73,17 @@ it('silently handles cancellation without downloading or opening instructions', 
   await expect(sendGarminCourse(input, show)).resolves.toBeUndefined();
   expect(show).not.toHaveBeenCalled(); expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
-it('propagates share errors for the UI to report without an unexpected download', async () => {
-  canShare.mockReturnValue(true); share.mockRejectedValue(new Error('share failed'));
-  await expect(sendGarminCourse(input, show)).rejects.toThrow('share failed');
-  expect(show).not.toHaveBeenCalled(); expect(URL.createObjectURL).not.toHaveBeenCalled();
+it.each([new DOMException('Permission denied', 'NotAllowedError'), new Error('share failed')])('downloads and shows instructions after share rejects with %s', async error => {
+  canShare.mockReturnValue(true); share.mockRejectedValue(error);
+  await expect(sendGarminCourse(input, show)).resolves.toBe('downloaded');
+  expect(share).toHaveBeenCalledOnce();
+  expect(downloaded).toBe(gpxFilename(input.name).replace(/\.gpx$/, '.fit'));
+  expect(show).toHaveBeenCalledOnce(); expect(URL.createObjectURL).toHaveBeenCalledOnce();
+});
+it('falls back when share throws synchronously', async () => {
+  canShare.mockReturnValue(true); share.mockImplementation(() => { throw new DOMException('Permission denied', 'NotAllowedError'); });
+  await expect(sendGarminCourse(input, show)).resolves.toBe('downloaded');
+  expect(show).toHaveBeenCalledOnce(); expect(URL.createObjectURL).toHaveBeenCalledOnce();
 });
 it('opens a labelled native dialog, closes it, and restores the saved suppression choice', () => {
   const dialog = document.getElementById('garmin-dialog') as HTMLDialogElement;

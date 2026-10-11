@@ -19,21 +19,28 @@ export function installGarminDialog() {
 }
 
 let fitModule: Promise<typeof import('../fit')> | null = null;
-export function preloadFit() { fitModule ??= import('../fit'); fitModule.catch(() => { fitModule = null; }); return fitModule; }
+let loadedFitModule: typeof import('../fit') | null = null;
+export function preloadFit() {
+  fitModule ??= import('../fit').then(module => (loadedFitModule = module));
+  fitModule.catch(() => { fitModule = null; });
+  return fitModule;
+}
 
-/** Load the FIT encoder only when the user sends a course. */
+/** Generate FIT before sharing; a preloaded encoder preserves the synchronous click-to-share path. */
 export async function sendGarminCourse(input: Omit<FitCourseInput, 'timeCreated' | 'serialNumber'>, showInstructions: () => void) {
-  const { generateFitCourse } = await preloadFit();
+  const { generateFitCourse } = loadedFitModule ?? await preloadFit();
   const serialNumber = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
   const bytes = generateFitCourse({ ...input, timeCreated: new Date(), serialNumber });
   const file = new File([new Uint8Array(bytes)], gpxFilename(input.name).replace(/\.gpx$/, '.fit'), { type: 'application/octet-stream' });
-  if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: input.name }); }
-    catch (error) {
-      if (!(error && typeof error === 'object' && 'name' in error && error.name === 'AbortError')) throw error;
-      return;
+  if (window.matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: input.name });
+      return 'shared' as const;
     }
-    return 'shared' as const;
+    catch (error) {
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') return;
+      // Sharing can be denied or lose user activation; keep the generated FIT available via download.
+    }
   }
   const url = URL.createObjectURL(file), link = document.createElement('a');
   link.href = url; link.download = file.name;
