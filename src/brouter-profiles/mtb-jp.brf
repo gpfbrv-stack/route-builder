@@ -1,6 +1,8 @@
 # mtb-jp
 # Japan-tuned copy of BRouter mtb.brf (https://brouter.de/brouter/profiles2/mtb.brf, MIT).
 # Change: trunk not_isbike_penalty 8.2 -> 1.5 (same as primary)
+# Change: path_preference 20.0 -> 5.0. At 20 the profile left the Hachibuse-Takabotchi ridge
+#   road for trails into the valley (11.5 km / +679 m vs 6.2 km / +87 m); other test legs unchanged.
 # Reason: OSM Japan tags ordinary national routes (kokudo) as highway=trunk; the
 # Europe-tuned trunk penalty caused long detours. motorway / motorroad=yes stay forbidden.
   # Poutnik's Trekking profile template for Trekking profile variants
@@ -28,7 +30,7 @@
   assign   hills                  0 # 1=default / 0=BRouter default/ 1=+ penalty for uphills >3.0%/ 2=velomobile-like avoiding slopes, 3= simulates ascend/length time equiv.
                                     # 4=valley mode, 5=No-Flats mode
   assign   isbike_for_mainroads   true # default=true / if false then bike friendly tag hints for mainroads are ignored, keeping their high penalties. v2.5.20
-  assign   path_preference        20.0 # 20.0 as default, the bigger it is the bigger it penalizes nonpath ways a/o paved ways
+  assign   path_preference        5.0  # 20.0 as default, the bigger it is the bigger it penalizes nonpath ways a/o paved ways
 
   assign use_proposed_cycleroutes = false  # %use_proposed_cycleroutes% | Set to true to consider proposed and regular cycleroutes as equals | boolean
 
