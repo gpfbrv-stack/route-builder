@@ -5,6 +5,7 @@ import type { Sample } from '../elevation';
 import { generateGPX, parseGPX } from '../gpx';
 import { encodeRoute } from '../persistence';
 import { Decoder, Stream } from '@garmin/fitsdk';
+import { PIN_STORAGE_KEY } from '../pins';
 const captured = vi.hoisted(() => ({ map: undefined as L.Map | undefined, alternative: false, straight: false, routeCalls: 0, detour: false }));
 vi.mock('../map', async importOriginal => {
   const actual = await importOriginal<typeof import('../map')>();
@@ -327,4 +328,66 @@ it('runs the full UI with Leaflet: edit, save, share, layers, GPX, clear and und
   name.value = 'edited'; name.dispatchEvent(new Event('change'));
   expect(document.querySelector('.detour-leg')).toBeNull();
   captured.detour = false;
+});
+
+it('imports pins without routing/network changes; canvas popup appends a waypoint and one Undo restores the route', async () => {
+  const leaflet = (await import('leaflet')).default;
+  const context = new Proxy({}, { get: () => () => {} });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as CanvasRenderingContext2D);
+  const input = document.getElementById('file') as HTMLInputElement;
+  const state = () => JSON.parse(localStorage.getItem('route-builder:v1')!);
+  const previous = state(), network = vi.mocked(fetch).mock.calls.length, calls = captured.routeCalls;
+  const read = async (name: string, text: string, size = 1) => {
+    Object.defineProperty(input, 'files', { configurable: true, value: [{ name, size, text: async () => text }] });
+    await input.onchange!.call(input, new Event('change'));
+  };
+  const pins = () => {
+    const result: L.CircleMarker[] = [];
+    captured.map!.eachLayer(layer => { if (layer instanceof leaflet.CircleMarker && layer.options.pane === 'pinPane') result.push(layer); });
+    return result;
+  };
+  const content = '<kml><Placemark><name>マイピン</name><Point><coordinates>138,36,800</coordinates></Point></Placemark><Placemark><LineString/></Placemark></kml>';
+  await read('places.kml', content);
+  expect(state()).toEqual(previous); expect(captured.routeCalls).toBe(calls); expect(vi.mocked(fetch).mock.calls).toHaveLength(network);
+  expect(document.getElementById('status')!.textContent).toContain('ピンを1件読み込みました(1件はスキップ)');
+  expect(pins()).toHaveLength(1); expect(pins()[0].options.renderer).toBeInstanceOf(leaflet.Canvas);
+  expect(pins()[0].options.bubblingMouseEvents).toBe(false);
+  expect(captured.map!.getPane('pinPane')!.style.zIndex).toBe('340');
+  captured.map!.setZoom(11); expect(pins()[0].getRadius()).toBe(3);
+  captured.map!.setZoom(12); expect(pins()[0].getRadius()).toBe(6);
+  pins()[0].fire('click', { latlng: pins()[0].getLatLng() }, true);
+  expect(state()).toEqual(previous);
+  expect(document.querySelector('.pin-popup')!.textContent).toContain('マイピン');
+  document.querySelector<HTMLButtonElement>('.pin-popup button')!.click();
+  expect(state().points).toEqual([...previous.points, { lat: 36, lng: 138 }]);
+  document.getElementById('undo')!.click(); expect(state()).toEqual(previous);
+  await read('places.kml', content); expect(pins()).toHaveLength(1);
+  await read('another.kml', content); expect(pins()).toHaveLength(2);
+  const check = document.querySelector<HTMLInputElement>('.pin-source input')!;
+  check.click(); expect(pins()).toHaveLength(1); expect(JSON.parse(localStorage.getItem(PIN_STORAGE_KEY)!)[0].visible).toBe(false);
+  expect(state()).toEqual(previous);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  document.querySelector<HTMLButtonElement>('.pin-delete')!.click(); expect(document.querySelectorAll('.pin-source')).toHaveLength(2);
+  expect(state()).toEqual(previous);
+  confirm.mockReturnValue(true); document.querySelector<HTMLButtonElement>('.pin-delete')!.click();
+  expect(document.querySelectorAll('.pin-source')).toHaveLength(1);
+  expect(state()).toEqual(previous);
+  const stored = localStorage.getItem(PIN_STORAGE_KEY);
+  const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await read('quota.kml', content);
+  expect(pins()).toHaveLength(2); expect(localStorage.getItem(PIN_STORAGE_KEY)).toBe(stored);
+  expect(document.getElementById('status')!.textContent).toContain('ピンを保存できません');
+  storage.mockRestore();
+  await read('too-big.kml', content, 20_000_001); expect(pins()).toHaveLength(2);
+  expect(document.getElementById('status')!.textContent).toContain('20MB');
+  await read('bad.kml', '<kml>'); expect(pins()).toHaveLength(2);
+  // A failed import must not replace any existing source.
+  expect(JSON.parse(localStorage.getItem(PIN_STORAGE_KEY)!)).toHaveLength(1);
+  await read('Saved Places.json', JSON.stringify({ type: 'FeatureCollection', features: [
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [135, 35] }, properties: { Title: 'Takeoutの場所' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} },
+  ] }));
+  expect(pins()).toHaveLength(3); expect(state()).toEqual(previous);
+  expect(document.getElementById('status')!.textContent).toContain('ピンを1件読み込みました(1件はスキップ)');
+  expect(JSON.parse(localStorage.getItem(PIN_STORAGE_KEY)!)).toHaveLength(3);
 });

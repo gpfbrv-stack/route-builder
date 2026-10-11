@@ -9,7 +9,7 @@ export function mountUI() {
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `${icons}<main class="app">
     <aside id="panel" class="sidebar" aria-label="ルート情報">
       <button id="panel-toggle" class="sheet-grip m-only" aria-controls="panel-content" aria-expanded="false" aria-label="ルート情報を開く"></button>
-      <div class="brand"><div class="brand-mark" aria-hidden="true">${icon('route')}</div><span class="brand-name">ルートビルダー</span>${action('import', 'GPXを読み込む', 'upload', 'icon-btn', 'import')}${action('share', '共有URLをコピー', 'share', 'icon-btn')}</div>
+      <div class="brand"><div class="brand-mark" aria-hidden="true">${icon('route')}</div><span class="brand-name">ルートビルダー</span>${action('import', 'GPX・ピンを読み込む', 'upload', 'icon-btn', 'import')}${action('share', '共有URLをコピー', 'share', 'icon-btn')}</div>
       <div id="panel-content" class="sb-scroll">
         <div class="controls">${segment()}${modeSegment()}</div>
         <div class="route-name"><input id="route-name" aria-label="ルート名" maxlength="200" value="新しいルート"></div>
@@ -27,12 +27,12 @@ export function mountUI() {
       <footer class="sb-foot">${action('garmin', 'ガーミンへ送る', 'download', 'btn primary', 'garmin')}${action('export', 'GPX', 'download', 'btn', 'export')}${action('share', '共有', 'share', 'btn', 'share')}</footer>
     </aside>
     <div id="map" aria-label="ルート作成地図">
-      <div class="map-ui m-top m-only">${segment()}<div style="position:relative"><button class="fab" id="menu-btn" aria-label="メニュー" aria-controls="menu-pop" aria-expanded="false">${icon('more')}</button><div id="menu-pop" class="menu-pop">${modeSegment()}<hr>${action('export', 'GPXで保存', 'download', '')}${action('import', 'GPXを読み込む', 'upload', '')}${action('share', '共有URLをコピー', 'share', '')}<hr>${action('reprofile-all', '全区間を現在の設定で引き直す', 'route', '')}${action('clear', 'ルートを全消去', 'trash', '')}</div></div></div>
+      <div class="map-ui m-top m-only">${segment()}<div style="position:relative"><button class="fab" id="menu-btn" aria-label="メニュー" aria-controls="menu-pop" aria-expanded="false">${icon('more')}</button><div id="menu-pop" class="menu-pop">${modeSegment()}<hr>${action('export', 'GPXで保存', 'download', '')}${action('import', 'GPX・ピンを読み込む', 'upload', '')}${action('share', '共有URLをコピー', 'share', '')}<hr>${action('reprofile-all', '全区間を現在の設定で引き直す', 'route', '')}${action('clear', 'ルートを全消去', 'trash', '')}</div></div></div>
       <div id="hint" class="map-ui hint-chip d-only">地図をクリックで経由点を追加 · ルート上をドラッグで経由点を挿入</div>
       <div class="map-ui fab-col"><div style="position:relative"><button class="fab" id="layer-btn" aria-label="背景地図を選ぶ" aria-controls="layer-pop" aria-expanded="false">${icon('layers')}</button><div id="layer-pop" class="layer-pop" role="dialog" aria-label="背景地図"></div></div><div class="fab-group zoom">${action('zoom-in','拡大','plus')}${action('zoom-out','縮小','minus')}</div>${action('locate','現在地','locate')}</div>
       <div class="map-ui edit-bar d-only" role="toolbar" aria-label="編集">${action('undo','元に戻す','undo','','undo')}${action('fit','全体表示','fit','','fit')}<span class="sep"></span>${action('reprofile-all','全区間を引き直す','route','','reprofile-all')}${action('clear','全消去','trash','','clear')}</div>
       <div class="map-ui m-tools m-only">${action('undo','元に戻す','undo')}${action('fit','全体表示','fit')}</div>
-    </div><input id="file" type="file" accept=".gpx,application/gpx+xml" hidden><select id="profile" hidden>${Object.keys(CONFIG.profiles).map(key => `<option value="${key}">${key}</option>`).join('')}</select>
+    </div><input id="file" type="file" accept=".gpx,.kml,.kmz,.json,.geojson,application/gpx+xml,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz,application/geo+json,application/json" hidden><select id="profile" hidden>${Object.keys(CONFIG.profiles).map(key => `<option value="${key}">${key}</option>`).join('')}</select>
   </main>
   <dialog id="garmin-dialog" class="garmin-dialog" aria-labelledby="garmin-title">
     <h2 id="garmin-title">FITをGarmin Connectへ取り込む</h2>
